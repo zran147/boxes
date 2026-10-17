@@ -16,6 +16,7 @@ import ipaddress
 import os
 import pwd
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -96,6 +97,10 @@ def up(
 
     _run(["ip", "link", "add", br, "type", "bridge"])
     _run(["ip", "link", "set", br, "up"])
+    # Docker enables br_netfilter, so bridged IP traffic traverses FORWARD,
+    # which Docker's policy drops for unknown bridges. Allow this bridge only.
+    if shutil.which("iptables"):
+        _try(["iptables", "-I", "FORWARD", "-i", br, "-o", br, "-j", "ACCEPT"])
     _run(["ip", "tuntap", "add", "dev", tap, "mode", "tap", "user", user])
     _run(["ip", "link", "set", tap, "master", br])
     _run(["ip", "link", "set", tap, "up"])
@@ -124,6 +129,9 @@ def down(name: str) -> dict:
         raise NetError(f"invalid machine id {name!r}")
     if len(name) > 9:
         raise NetError(f"machine id {name!r} is too long for interface names")
+    br = f"br-{name}"
+    if shutil.which("iptables"):
+        _try(["iptables", "-D", "FORWARD", "-i", br, "-o", br, "-j", "ACCEPT"])
     for dev in (f"tap-{name}", f"veth-{name}", f"br-{name}"):
         _try(["ip", "link", "del", dev])
     return {"machine": name, "removed": True}

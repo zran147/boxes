@@ -10,9 +10,9 @@ Design decisions driven by measurements on a TCG-only host:
 * ``savevm``/``loadvm`` on the qcow2 overlay for snapshotting a provisioned
   machine and restoring it (multi-path, per-step repro).
 
-Networking is user-mode (``-netdev user``) with an SSH hostfwd. That is enough
-for target-context PoCs. Attacker-context PoCs need a tap/bridge or veth helper
-and are not supported by this backend yet.
+Networking is user-mode (``-netdev user``) with an SSH hostfwd for management,
+plus an optional tap NIC for the attacker container on a shared bridge. The
+management NIC is always added first so the pre-baked netplan keeps DHCP/SSH.
 """
 
 from __future__ import annotations
@@ -241,6 +241,12 @@ class QemuBackend:
             # read-only, otherwise QEMU refuses savevm (all writable disks must
             # support snapshots)
             args += ["-drive", f"file={self.seed},if=virtio,format=raw,readonly=on"]
+        # management NIC must be first: the pre-baked netplan configures the
+        # first interface (ens3) for DHCP/SSH
+        args += [
+            "-netdev", f"user,id=n0,hostfwd=tcp:127.0.0.1:{port}-:22",
+            "-device", "virtio-net-pci,netdev=n0",
+        ]
         net_info = self.network_info(network) if network != "none" else None
         if net_info is not None:
             args += [
@@ -248,8 +254,6 @@ class QemuBackend:
                 "-device", f"virtio-net-pci,netdev=net1,mac={TAP_MAC}",
             ]
         args += [
-            "-netdev", f"user,id=n0,hostfwd=tcp:127.0.0.1:{port}-:22",
-            "-device", "virtio-net-pci,netdev=n0",
             "-display", "none",
             "-serial", f"file:{log}",
             "-monitor", f"unix:{mon},server,nowait",

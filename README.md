@@ -322,7 +322,10 @@ boxes verify --recipe vm-ssh-foothold --backend qemu --no-cache
 `boxes net up <id> --attacker-pid <pid> --user <user>` creates `br-<id>`,
 `tap-<id>`, `veth-<id>`, moves the container end into the attacker netns
 (`eth0`, `10.66.1.3/24`), and leaves the VM tap for QEMU (`10.66.1.2/24`).
-`boxes net down <id>` removes them.
+`boxes net down <id>` removes them. It also inserts a scoped
+`iptables -I FORWARD -i br-<id> -o br-<id> -j ACCEPT` (Docker enables
+`br_netfilter`, so bridged IP traffic would otherwise hit the FORWARD DROP
+policy); `down` removes that rule too.
 
 **This runs per machine start, not once.** Only the bridge could persist; the tap
 is tied to the VM boot and the veth to the attacker container's netns.
@@ -347,6 +350,6 @@ give a QEMU wrapper `cap_net_admin` or pass the tap fd from the helper.
 |-------|-------|--------|
 | **P0** — symbolic generation | Facts + unification, typed predicates, recipes, bounded-length planner, `open_port` prelude, causal connectivity, two-seed manifest, lint, scaffold, per-recipe harness | **Done** |
 | **P1** — container fast path | Pluggable backend, target + attacker images, internal network, shared attacker container, provision/poc contract, assets, L2 + L3 verification, content-addressed cache, parallel jobs, real recipes | **Done** |
-| **P2** — fidelity + branching | QEMU + prebaked base + snapshots (TCG-verified; attacker context needs `boxes net`); independent multi-path (`--multi-path`); shared-prefix DAG next | **Partial** |
+| **P2** — fidelity + branching | QEMU + prebaked base + snapshots; target- and attacker-context PoCs verified under TCG; independent multi-path (`--multi-path`); shared-prefix DAG next | **Partial** |
 | **P3** — coherence + scale | Difficulty budgets, themes, typed choices, more distros, a complete attacker toolkit | Planned |
 | **P4** — registry | Recipe registry API + client, signed recipes, sandboxed execution, per-recipe CI | Planned |
