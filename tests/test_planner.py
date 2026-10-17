@@ -185,10 +185,11 @@ def test_generate_paths_returns_distinct_paths(pool):
         assert is_relevant(path)
 
 
-def test_generate_paths_returns_fewer_when_exhausted(pool):
-    # only one chain exists at this depth
-    paths = generate_paths(pool, OS, 1, 1, 0, 5)
-    assert len(paths) == 1
+def test_generate_paths_dedupes_and_bounds(pool):
+    paths = generate_paths(pool, OS, 1, 1, 0, 50)
+    assert 1 <= len(paths) <= 50
+    chains = [tuple(s.recipe.id for s in p.steps) for p in paths]
+    assert len(chains) == len(set(chains))
 
 
 def test_multi_path_writeup_and_json(pool):

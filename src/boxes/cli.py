@@ -21,6 +21,7 @@ from .planner import generate, generate_paths, satisfies
 from .registry import load_registry, select
 from .runner import verify_machine, verify_recipes
 from .scaffold import create_recipe
+from .vm_image import prepare_base
 from .writeup import paths_to_dict, plan_to_dict, render_machine_markdown, render_markdown
 
 DEFAULT_RECIPES = Path("recipes")
@@ -197,7 +198,15 @@ def _prepare_backend(args):
     backend = get_backend(args.backend)
     if not backend.available():
         print(f"backend {args.backend!r} is not available", file=sys.stderr)
+        if args.backend == "qemu":
+            print(
+                "qemu needs qemu-system-x86_64, a pre-baked base image and an SSH key.\n"
+                "run: boxes image build --backend qemu --os ubuntu-22.04",
+                file=sys.stderr,
+            )
         return None
+    if args.backend == "qemu":
+        return backend
     rebuild = getattr(args, "rebuild", False)
     for tag, ensure in (
         (image_tag(args.os), lambda: ensure_image(backend, args.os, rebuild)),
@@ -212,6 +221,14 @@ def _prepare_backend(args):
 
 
 def cmd_image(args) -> int:
+    if args.backend == "qemu":
+        res = prepare_base(PROJECT_ROOT / ".boxes-vm", rebuild=args.rebuild)
+        if not res.ok:
+            print("VM base image prep failed:", file=sys.stderr)
+            print(res.output(), file=sys.stderr)
+            return 1
+        print(res.stdout.strip() or "VM base image ready")
+        return 0
     backend = _prepare_backend(args)
     if backend is None:
         return 2
@@ -231,12 +248,15 @@ def cmd_verify(args) -> int:
     if backend is None:
         return 2
     image = image_tag(args.os)
-    image_id = f"{backend.image_id(image)}|{backend.image_id(attacker_image())}"
+    if args.backend == "qemu":
+        image_id = backend.image_id(image)
+    else:
+        image_id = f"{backend.image_id(image)}|{backend.image_id(attacker_image())}"
     cache = _make_cache(args)
 
     if args.machine:
         recipes = load_registry(args.recipes)
-        pool = select(recipes, args.os)
+        pool = select(recipes, args.os, fidelity=backend.fidelity)
         build_seed = args.build_seed if args.build_seed is not None else random.randrange(1, 2**31)
 
         if args.multi_path is not None:
@@ -309,6 +329,9 @@ def cmd_verify(args) -> int:
     for r in targets:
         if not r.verifiable:
             print(f"SKIP {r.id} (symbolic only: no provision/poc)")
+            continue
+        if r.fidelity != backend.fidelity:
+            print(f"SKIP {r.id} (fidelity {r.fidelity} on {backend.fidelity} backend)")
             continue
         fixture = check_recipe(r, args.seed).fixture
         if fixture is None:
@@ -386,7 +409,7 @@ def build_parser() -> argparse.ArgumentParser:
     ib = img_sub.add_parser("build", help="build the base image")
     ib.add_argument("--os", default="ubuntu-22.04")
     ib.add_argument("--rebuild", action="store_true")
-    ib.add_argument("--backend", default="docker", choices=["docker"])
+    ib.add_argument("--backend", default="docker", choices=["docker", "qemu"])
     ib.set_defaults(func=cmd_image)
 
     v = sub.add_parser("verify", help="build and verify recipes or a machine")
@@ -402,7 +425,7 @@ def build_parser() -> argparse.ArgumentParser:
     v.add_argument("--to-user", type=int, default=1, dest="to_user")
     v.add_argument("--to-root", type=int, default=1, dest="to_root")
     v.add_argument("--os", default="ubuntu-22.04")
-    v.add_argument("--backend", default="docker", choices=["docker"])
+    v.add_argument("--backend", default="docker", choices=["docker", "qemu"])
     v.add_argument("--keep", action="store_true", help="keep the container for debugging")
     v.add_argument("--jobs", type=int, default=min(4, os.cpu_count() or 1),
                    help="parallel containers when verifying --all")
