@@ -263,8 +263,9 @@ boxes verify --all --clear-cache  # wipe first
 ```
 
 `--jobs` parallelizes independent recipes. Chain verification is sequential
-because every step depends on the previous ones. On this host: 10 container
-recipes cold with 4 jobs ≈ 9 s; warm cache ≈ 0.3 s.
+because every step depends on the previous ones. Container timings on this host:
+11 recipes cold with 4 jobs ≈ 30 s (the package probe installs via the proxy);
+warm cache ≈ 0.3 s.
 
 ## VM backend (experimental)
 

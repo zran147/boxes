@@ -18,6 +18,7 @@ PoC contexts:
 
 from __future__ import annotations
 
+import os
 import re
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -32,7 +33,7 @@ from .proxy import PROXY_IP, PROXY_PORT
 from . import proxy as proxy_mod
 from .recipe import Recipe
 
-PROVISION_TIMEOUT = 900
+PROVISION_TIMEOUT = int(os.environ.get("BOXES_PROVISION_TIMEOUT", "1200"))
 _SAFE = re.compile(r"[^A-Za-z0-9_.-]")
 
 
@@ -512,7 +513,7 @@ def verify_paths(
             return results
 
         for index, (path, manifest) in enumerate(zip(paths, manifests), 1):
-            result = VerifyResult(label=f"path {index} seed={path.seed}")
+            result = VerifyResult(label=f"path seed={path.seed}")
             if index > 1:
                 rest = backend.restore(setup.target, "clean")
                 result.add(StepResult("machine", "restore-clean", rest.ok, rest.exit_code, rest.output()))

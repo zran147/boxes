@@ -245,6 +245,7 @@ class QemuBackend:
         if provision:
             boxes = os.environ.get("BOXES_BIN") or shutil.which("boxes")
             if not boxes:
+                overlay.unlink(missing_ok=True)
                 return ExecResult(1, "", "`boxes` is not on PATH; install it or set BOXES_BIN")
             user = os.environ.get("SUDO_USER") or getpass.getuser()
             res = self._run(
@@ -252,10 +253,12 @@ class QemuBackend:
                 timeout=60,
             )
             if not res.ok:
+                overlay.unlink(missing_ok=True)
                 return res
             try:
                 prov_tap = json.loads(res.stdout)["tap"]
             except (json.JSONDecodeError, KeyError):
+                overlay.unlink(missing_ok=True)
                 return ExecResult(1, res.stdout, "could not parse provision tap output")
             prov_ip = self._provision_ip(name)
             state.update({"provision_tap": prov_tap, "provision_ip": prov_ip,
