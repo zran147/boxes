@@ -1,0 +1,21 @@
+id: vm-ssh-foothold
+version: 1.0.0
+kind: foothold
+description: Reuse credentials to get an SSH shell on a real VM.
+os: ["ubuntu-*"]
+difficulty: 0.3
+fidelity: vm
+provision: ./provision.sh
+poc:
+  script: ./poc.sh
+  context: attacker
+poc_timeout: 120
+yields: ["user"]
+requires:
+  - open_port($h, 22)
+  - creds($u, $p)
+provides:
+  - access_shell($u)
+walkthrough: |
+  We reuse the discovered credentials (`{u}` / `{p}`) against SSH on the VM.
+  They are valid and return a shell as `{u}`; `user.txt` is in that user's home.

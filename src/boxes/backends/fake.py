@@ -37,13 +37,16 @@ class FakeBackend:
     def image_id(self, tag: str) -> str:
         return f"fake-id:{tag}"
 
+    def pid(self, name: str) -> int:
+        return 12345
+
     def build_image(self, tag: str, context: str) -> ExecResult:
         self.calls.append(("build_image", tag, context))
         self.images.add(tag)
         return ExecResult(0, "", "")
 
-    def network_create(self, name: str) -> ExecResult:
-        self.calls.append(("network_create", name))
+    def network_create(self, name: str, attacker_pid: int | None = None) -> ExecResult:
+        self.calls.append(("network_create", name, attacker_pid))
         return ExecResult(0, "", "")
 
     def network_destroy(self, name: str) -> ExecResult:

@@ -261,13 +261,66 @@ provision+poc; otherwise it reports which ones are symbolic-only rather than
 silently skipping them. It also refuses recipes whose `fidelity` doesn't match
 the backend — a `fidelity: vm` recipe is never tested in a container.
 
+## VM backend (experimental)
+
+Prerequisites: `qemu-system-x86`, `cloud-image-utils`, `libguestfs-tools`, and
+a KVM-capable host for usable speed (TCG works, ~1m30s+ per boot). Build the
+pre-baked base once:
+
+```bash
+pip install -e .          # so `boxes` is an absolute console script sudo can call
+boxes image build --backend qemu --os ubuntu-22.04
+boxes verify --recipe vm-sudo-misconfig --backend qemu
+```
+
+That recipe uses a `context: target` PoC. For an attacker-context PoC the VM and
+a Docker attacker container must share an L2 segment. `boxes net up/down` is the
+only part that needs root; allow it with a sudoers rule:
+
+```bash
+sudo visudo -f /etc/sudoers.d/boxes
+```
+
+```
+user ALL=(root) NOPASSWD: /absolute/path/to/boxes net up *, /absolute/path/to/boxes net down *
+```
+
+Then:
+
+```bash
+boxes verify --recipe vm-ssh-foothold --backend qemu --no-cache
+```
+
+`boxes net up <id> --attacker-pid <pid> --user <user>` creates `br-<id>`,
+`tap-<id>`, `veth-<id>`, moves the container end into the attacker netns
+(`eth0`, `10.66.1.3/24`), and leaves the VM tap for QEMU (`10.66.1.2/24`).
+`boxes net down <id>` removes them.
+
+**This runs per machine start, not once.** Only the bridge could persist; the
+tap is tied to the VM boot and the veth to the attacker container's netns.
+
+If the sudoers rule is missing, sudo is non-interactive, or `boxes` is not on
+PATH, `verify` prints a warning and marks the recipe unverifiable instead of
+crashing:
+
+```
+warning: cannot set up VM attacker networking, so the attacker-context PoC
+cannot run and this recipe cannot be verified...
+```
+
+Set `BOXES_BIN=/absolute/path/to/boxes` if the console script is not on `PATH`.
+Isolation: the attack bridge has no uplink or host IP; the VM's management NIC
+(user-mode + SSH hostfwd) is separate. If QEMU cannot open the pre-created tap
+unprivileged, give a QEMU wrapper `cap_net_admin` or pass the tap fd from the
+helper.
+
 ## Roadmap
 
 | Stage | Scope | Status |
 |-------|-------|--------|
 | **P0** — symbolic generation | Facts + unification, typed predicates, recipes, bounded-length planner, `open_port` prelude, causal-chain constraint, two-seed manifest, lint, `boxes new` scaffold, per-recipe harness | **Done** |
 | **P1** — container fast path | Pluggable backend (Docker + fake), target + attacker images, per-machine internal network, shared attacker container, `provision`/`poc` contract (`context: target|attacker`), recipe assets, L2 minimal repro, L3 full-chain verification, content-addressed verification cache, parallel `--jobs`, real FTP/SSH/web/SUID/sudo recipes | **Done** |
-| **P2** — fidelity + branching | QEMU backend + snapshots (needs a KVM host); multiple independent paths per flag (`--multi-path`; shared-prefix DAG next) | **P2.3 done · P2.2 blocked** |
+| **P2** — fidelity + branching | QEMU backend + prebaked base + snapshots (TCG verified; attacker-context needs the `boxes net` sudoers helper); multiple independent paths (`--multi-path`; shared-prefix DAG next) | **P2.3 done · P2.2 partial** |
 | **P3** — coherence + scale | Difficulty budgets, themes, typed choices (value sets constrained by what provision/PoC support), more distros, a more complete attacker toolkit | Planned |
 | **P4** — registry | Recipe registry API + client, signed recipes, sandboxed recipe execution, per-recipe CI | Planned |
 

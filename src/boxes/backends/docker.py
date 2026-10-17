@@ -51,10 +51,17 @@ class DockerBackend:
         res = self._run(["image", "inspect", "--format", "{{.Id}}", tag], timeout=30)
         return res.stdout.strip() if res.ok else tag
 
+    def pid(self, name: str) -> int:
+        res = self._run(["inspect", "-f", "{{.State.Pid}}", name], timeout=30)
+        try:
+            return int(res.stdout.strip())
+        except ValueError:
+            return 0
+
     def build_image(self, tag: str, context: str) -> ExecResult:
         return self._run(["build", "-t", tag, context], timeout=900)
 
-    def network_create(self, name: str) -> ExecResult:
+    def network_create(self, name: str, attacker_pid: int | None = None) -> ExecResult:
         # --internal: containers can reach each other, but have no route to the
         # host or the internet.
         return self._run(["network", "create", "--internal", name], timeout=60)

@@ -31,6 +31,7 @@ from .base import ExecResult
 
 QEMU = "qemu-system-x86_64"
 BOOT_TIMEOUT = 600
+TAP_MAC = "52:54:00:be:ef:01"
 
 
 class QemuBackend:
@@ -164,11 +165,43 @@ class QemuBackend:
     def build_image(self, tag: str, context: str) -> ExecResult:
         return ExecResult(1, "", "use `boxes image prep-vm` to build the VM base")
 
-    def network_create(self, name: str) -> ExecResult:
-        return ExecResult(0, "user-mode networking needs no setup", "")
+    def network_create(self, name: str, attacker_pid: int | None = None) -> ExecResult:
+        if attacker_pid is None:
+            return ExecResult(1, "", "VM attacker networking requires an attacker pid")
+        boxes = os.environ.get("BOXES_BIN") or shutil.which("boxes")
+        if not boxes:
+            return ExecResult(1, "", "`boxes` is not on PATH; install it or set BOXES_BIN")
+        user = os.environ.get("SUDO_USER") or getpass.getuser()
+        res = self._run(
+            [
+                "sudo", "-n", boxes, "net", "up", name,
+                "--attacker-pid", str(attacker_pid), "--user", user,
+            ],
+            timeout=60,
+        )
+        if not res.ok:
+            return res
+        try:
+            info = json.loads(res.stdout)
+        except json.JSONDecodeError:
+            return ExecResult(1, res.stdout, "could not parse `boxes net up` output")
+        (self.run_dir / f"net-{name}.json").write_text(json.dumps(info))
+        return ExecResult(0, res.stdout, "")
+
+    def network_info(self, name: str) -> dict | None:
+        path = self.run_dir / f"net-{name}.json"
+        if not path.is_file():
+            return None
+        return json.loads(path.read_text())
 
     def network_destroy(self, name: str) -> ExecResult:
-        return ExecResult(0, "", "")
+        path = self.run_dir / f"net-{name}.json"
+        boxes = os.environ.get("BOXES_BIN") or shutil.which("boxes")
+        res = ExecResult(0, "", "")
+        if boxes:
+            res = self._run(["sudo", "-n", boxes, "net", "down", name], timeout=60)
+        path.unlink(missing_ok=True)
+        return res
 
     def create(self, name: str, image: str, network: str = "none", alias: str | None = None) -> ExecResult:
         if not self.available():
@@ -196,6 +229,12 @@ class QemuBackend:
             # read-only, otherwise QEMU refuses savevm (all writable disks must
             # support snapshots)
             args += ["-drive", f"file={self.seed},if=virtio,format=raw,readonly=on"]
+        net_info = self.network_info(network) if network != "none" else None
+        if net_info is not None:
+            args += [
+                "-netdev", f"tap,id=net1,ifname={net_info['tap']},script=no,downscript=no",
+                "-device", f"virtio-net-pci,netdev=net1,mac={TAP_MAC}",
+            ]
         args += [
             "-netdev", f"user,id=n0,hostfwd=tcp:127.0.0.1:{port}-:22",
             "-device", "virtio-net-pci,netdev=n0",
@@ -211,6 +250,18 @@ class QemuBackend:
         if not self._wait_ssh(name):
             tail = log.read_text(errors="replace")[-1500:] if log.is_file() else ""
             return ExecResult(1, "", f"VM did not become reachable\n{tail}")
+        if net_info is not None:
+            # give the tap NIC its address; find it by MAC (its name may be
+            # renamed by udev/cloud-init)
+            script = (
+                f"dev=$(ip -o link | awk -F': ' '/{TAP_MAC}/ {{print $2; exit}}')\n"
+                "test -n \"$dev\"\n"
+                f"ip addr replace {net_info['vm_ip']}/24 dev \"$dev\"\n"
+                "ip link set \"$dev\" up\n"
+            )
+            res = self.exec(name, script, timeout=60)
+            if not res.ok:
+                return ExecResult(1, res.stdout, f"could not configure tap NIC: {res.stderr}")
         return ExecResult(0, "", "")
 
     def _free_port(self) -> int:

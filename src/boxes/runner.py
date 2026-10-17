@@ -2,15 +2,18 @@
 
 Two levels, mirroring the verification hierarchy:
 
-* **L2 / minimal repro** -- :func:`verify_recipe` builds a throwaway container,
+* **L2 / minimal repro** -- :func:`verify_recipe` builds a throwaway machine,
   runs one recipe's ``provision`` (as root) then its ``poc`` (as the actor), and
-  tears it down. Recipes therefore prove themselves in isolation.
+  tears it down.
 * **L3 / chain** -- :func:`verify_machine` provisions every step in order, then
-  runs every PoC in order. This tests composability, not just individual recipes.
+  runs every PoC in order.
 
-PoC contract: a script that exits 0 on success. Provisioning and PoC both get
-the grounded values in the environment as ``BOX_<KEY>`` (e.g. ``BOX_U``,
-``BOX_BINARY``), plus ``BOX_RECIPE`` and ``BOX_OS``.
+PoC contexts:
+
+* ``target`` runs inside the target, as the actor, with ``BOX_HOST=127.0.0.1``.
+* ``attacker`` runs in the attacker container, with ``BOX_HOST`` set to the
+  target's address on the shared network (``target`` for Docker, the tap IP for
+  a VM).
 """
 
 from __future__ import annotations
@@ -34,7 +37,7 @@ _SAFE = re.compile(r"[^A-Za-z0-9_.-]")
 @dataclass
 class StepResult:
     recipe: str
-    phase: str  # "provision" | "poc"
+    phase: str  # "assets" | "provision" | "poc"
     ok: bool
     exit_code: int = 0
     output: str = ""
@@ -98,6 +101,19 @@ def _backend_fidelity(backend: Backend) -> str:
     return getattr(backend, "fidelity", "container")
 
 
+def _attacker_backend(backend: Backend) -> Backend:
+    """VM targets use a Docker attacker container on the shared tap network."""
+    if _backend_fidelity(backend) == "vm":
+        from .backends import get_backend
+
+        return get_backend("docker")
+    return backend
+
+
+def _attacker_for(recipe: Recipe) -> bool:
+    return getattr(recipe, "poc_context", "target") == "attacker"
+
+
 def _run_script(
     backend: Backend,
     container: str,
@@ -153,15 +169,136 @@ def _create(
     res = backend.create(container, image, network=network, alias=alias)
     if res.ok:
         return None
-    return f"could not create container: {res.output()}"
+    return f"could not create {container}: {res.output()}"
 
 
 def _network_name(prefix: str) -> str:
     return f"boxes-net-{prefix}-{uuid4().hex[:10]}"
 
 
-def _attacker_for(recipe: Recipe) -> bool:
-    return getattr(recipe, "poc_context", "target") == "attacker"
+@dataclass
+class _Setup:
+    target: str
+    network: str | None = None
+    attacker: str | None = None
+    attacker_backend: Backend | None = None
+    host: str = "target"
+    kept: bool = False
+
+
+def _setup(
+    backend: Backend,
+    label: str,
+    image: str,
+    needs_attacker: bool,
+    keep: bool,
+) -> tuple[_Setup | None, str | None]:
+    vm = _backend_fidelity(backend) == "vm"
+    setup = _Setup(
+        target=_container_name("target", label),
+        network=_network_name(label) if (needs_attacker or not vm) else None,
+        attacker=_container_name("attacker", label) if needs_attacker else None,
+        attacker_backend=_attacker_backend(backend) if needs_attacker else None,
+        kept=keep,
+    )
+
+    # VM: the attacker container must exist before `boxes net up` (it needs the
+    # pid to move the veth into its netns), and the tap must exist before boot.
+    if vm and needs_attacker:
+        err = _create(setup.attacker_backend, setup.attacker, attacker_image(), network="none")
+        if err:
+            return None, err
+        pid = getattr(setup.attacker_backend, "pid", lambda _n: 0)(setup.attacker)
+        if not pid:
+            setup.attacker_backend.destroy(setup.attacker)
+            return None, f"could not determine the attacker container pid for {setup.attacker}"
+        net_res = backend.network_create(setup.network, attacker_pid=pid)
+        if not net_res.ok:
+            setup.attacker_backend.destroy(setup.attacker)
+            return None, (
+                "warning: cannot set up VM attacker networking, so the "
+                "attacker-context PoC cannot run and this recipe cannot be "
+                f"verified. Run `boxes net up` via the sudoers rule. Detail: {net_res.output()}"
+            )
+        info = backend.network_info(setup.network) if hasattr(backend, "network_info") else {}
+        setup.host = (info or {}).get("vm_ip", "target")
+    else:
+        if setup.network is not None:
+            net_res = backend.network_create(setup.network)
+            if not net_res.ok:
+                return None, f"could not create network: {net_res.output()}"
+
+    err = _create(
+        backend,
+        setup.target,
+        image,
+        network=setup.network or "none",
+        alias="target" if setup.network else None,
+    )
+    if err:
+        _teardown(backend, setup, keep=False)
+        return None, err
+
+    if needs_attacker and not vm:
+        err = _create(backend, setup.attacker, attacker_image(), network=setup.network)
+        if err:
+            _teardown(backend, setup, keep=False)
+            return None, err
+    return setup, None
+
+
+def _teardown(backend: Backend, setup: _Setup, keep: bool) -> None:
+    if keep:
+        return
+    if setup.attacker is not None and setup.attacker_backend is not None:
+        setup.attacker_backend.destroy(setup.attacker)
+    backend.destroy(setup.target)
+    if setup.network is not None:
+        backend.network_destroy(setup.network)
+
+
+def _poc(
+    backend: Backend,
+    setup: _Setup,
+    recipe: Recipe,
+    ctx: dict,
+    os_name: str,
+    result: VerifyResult,
+) -> None:
+    if _attacker_for(recipe):
+        extra = _copy_assets(setup.attacker_backend, setup.attacker, recipe)
+        if not extra.ok:
+            result.add(_to_step(recipe, "assets", extra))
+        res = _run_script(
+            setup.attacker_backend,
+            setup.attacker,
+            recipe,
+            "poc",
+            ctx,
+            os_name,
+            "attacker",
+            recipe.poc_timeout,
+            host=setup.host,
+        )
+        result.add(_to_step(recipe, "poc", res, actor="attacker"))
+        return
+
+    actor, actor_err = _actor_or_error(recipe, ctx)
+    if actor_err:
+        result.add(StepResult(recipe.id, "poc", False, exit_code=2, output=actor_err))
+        return
+    res = _run_script(
+        backend,
+        setup.target,
+        recipe,
+        "poc",
+        ctx,
+        os_name,
+        actor,
+        recipe.poc_timeout,
+        host="127.0.0.1",
+    )
+    result.add(_to_step(recipe, "poc", res, actor=actor))
 
 
 def verify_recipe(
@@ -183,74 +320,29 @@ def verify_recipe(
             f"but {backend.name} is {_backend_fidelity(backend)}"
         )
         return result
-    if recipe.poc_context == "attacker" and _backend_fidelity(backend) == "vm":
-        result.ok = False
-        result.error = "vm backend does not support attacker-context PoCs yet"
-        return result
 
-    needs_attacker = _attacker_for(recipe)
-    network = _network_name("recipe")
-    target = _container_name("target", recipe.id)
-    attacker = _container_name("attacker", recipe.id) if needs_attacker else None
-    result.container = target
-    result.attacker = attacker
-    result.kept = keep
-
-    net_res = backend.network_create(network)
-    if not net_res.ok:
-        result.ok = False
-        result.error = f"could not create network: {net_res.output()}"
-        return result
-    err = _create(backend, target, image, network=network, alias="target")
-    if err:
-        backend.network_destroy(network)
+    setup, err = _setup(backend, recipe.id, image, _attacker_for(recipe), keep)
+    if setup is None:
         result.ok = False
         result.error = err
         return result
-    if attacker is not None:
-        err = _create(backend, attacker, attacker_image(), network=network)
-        if err:
-            backend.destroy(target)
-            backend.network_destroy(network)
-            result.ok = False
-            result.error = err
-            return result
+    result.container = setup.target
+    result.attacker = setup.attacker
+    result.kept = keep
 
     try:
         ctx = dict(fixture.context)
         ctx.setdefault("os", fixture.os)
-        assets = _copy_assets(backend, target, recipe)
+        assets = _copy_assets(backend, setup.target, recipe)
         result.add(_to_step(recipe, "assets", assets))
         prov = _run_script(
-            backend, target, recipe, "provision", ctx, fixture.os, None, PROVISION_TIMEOUT
+            backend, setup.target, recipe, "provision", ctx, fixture.os, None, PROVISION_TIMEOUT
         )
         result.add(_to_step(recipe, "provision", prov))
         if prov.ok:
-            if needs_attacker:
-                extra = _copy_assets(backend, attacker, recipe)
-                if not extra.ok:
-                    result.add(_to_step(recipe, "assets", extra))
-                poc = _run_script(
-                    backend, attacker, recipe, "poc", ctx, fixture.os,
-                    "attacker", recipe.poc_timeout, host="target",
-                )
-                result.add(_to_step(recipe, "poc", poc, actor="attacker"))
-            else:
-                actor, actor_err = _actor_or_error(recipe, ctx)
-                if actor_err:
-                    result.add(StepResult(recipe.id, "poc", False, exit_code=2, output=actor_err))
-                else:
-                    poc = _run_script(
-                        backend, target, recipe, "poc", ctx, fixture.os,
-                        actor, recipe.poc_timeout, host="127.0.0.1",
-                    )
-                    result.add(_to_step(recipe, "poc", poc, actor=actor))
+            _poc(backend, setup, recipe, ctx, fixture.os, result)
     finally:
-        if not keep:
-            if attacker is not None:
-                backend.destroy(attacker)
-            backend.destroy(target)
-            backend.network_destroy(network)
+        _teardown(backend, setup, keep)
     return result
 
 
@@ -261,8 +353,7 @@ def verify_machine(
     image: str,
     keep: bool = False,
 ) -> VerifyResult:
-    label = f"machine seed={plan.seed}"
-    result = VerifyResult(label=label)
+    result = VerifyResult(label=f"machine seed={plan.seed}")
 
     missing = [s.recipe.id for s in plan.steps if not s.recipe.verifiable]
     if missing:
@@ -283,45 +374,15 @@ def verify_machine(
         )
         return result
 
-    if _backend_fidelity(backend) == "vm":
-        unsupported = [
-            s.recipe.id for s in plan.steps if s.recipe.poc_context == "attacker"
-        ]
-        if unsupported:
-            result.ok = False
-            result.error = (
-                "vm backend does not support attacker-context PoCs yet: "
-                + ", ".join(unsupported)
-            )
-            return result
-
     needs_attacker = any(_attacker_for(s.recipe) for s in plan.steps)
-    network = _network_name("machine")
-    target = _container_name("machine", f"seed-{plan.seed}")
-    attacker = _container_name("attacker", f"seed-{plan.seed}") if needs_attacker else None
-    result.container = target
-    result.attacker = attacker
-    result.kept = keep
-
-    net_res = backend.network_create(network)
-    if not net_res.ok:
-        result.ok = False
-        result.error = f"could not create network: {net_res.output()}"
-        return result
-    err = _create(backend, target, image, network=network, alias="target")
-    if err:
-        backend.network_destroy(network)
+    setup, err = _setup(backend, f"seed-{plan.seed}", image, needs_attacker, keep)
+    if setup is None:
         result.ok = False
         result.error = err
         return result
-    if attacker is not None:
-        err = _create(backend, attacker, attacker_image(), network=network)
-        if err:
-            backend.destroy(target)
-            backend.network_destroy(network)
-            result.ok = False
-            result.error = err
-            return result
+    result.container = setup.target
+    result.attacker = setup.attacker
+    result.kept = keep
 
     contexts = []
     try:
@@ -329,43 +390,17 @@ def verify_machine(
             ctx = dict(manifest.step_context(step))
             ctx.setdefault("os", plan.os_name)
             contexts.append(ctx)
-            assets = _copy_assets(backend, target, step.recipe)
+            assets = _copy_assets(backend, setup.target, step.recipe)
             result.add(_to_step(step.recipe, "assets", assets))
             res = _run_script(
-                backend, target, step.recipe, "provision", ctx, plan.os_name, None, PROVISION_TIMEOUT
+                backend, setup.target, step.recipe, "provision", ctx, plan.os_name, None, PROVISION_TIMEOUT
             )
             result.add(_to_step(step.recipe, "provision", res))
 
         for step, ctx in zip(plan.steps, contexts):
-            if _attacker_for(step.recipe):
-                # one shared attacker container serves every attacker-context PoC
-                extra = _copy_assets(backend, attacker, step.recipe)
-                if not extra.ok:
-                    result.add(_to_step(step.recipe, "assets", extra))
-                res = _run_script(
-                    backend, attacker, step.recipe, "poc", ctx, plan.os_name,
-                    "attacker", step.recipe.poc_timeout, host="target",
-                )
-                result.add(_to_step(step.recipe, "poc", res, actor="attacker"))
-                continue
-
-            actor, actor_err = _actor_or_error(step.recipe, ctx)
-            if actor_err:
-                result.add(
-                    StepResult(step.recipe.id, "poc", False, exit_code=2, output=actor_err)
-                )
-                continue
-            res = _run_script(
-                backend, target, step.recipe, "poc", ctx, plan.os_name,
-                actor, step.recipe.poc_timeout, host="127.0.0.1",
-            )
-            result.add(_to_step(step.recipe, "poc", res, actor=actor))
+            _poc(backend, setup, step.recipe, ctx, plan.os_name, result)
     finally:
-        if not keep:
-            if attacker is not None:
-                backend.destroy(attacker)
-            backend.destroy(target)
-            backend.network_destroy(network)
+        _teardown(backend, setup, keep)
     return result
 
 
@@ -378,10 +413,7 @@ def verify_recipes(
     cache: Cache | None = None,
     keep: bool = False,
 ) -> list[VerifyResult]:
-    """Verify several recipes, using the cache and up to ``jobs`` containers.
-
-    Results are returned in input order regardless of completion order.
-    """
+    """Verify several recipes, using the cache and up to ``jobs`` machines."""
     fidelity = _backend_fidelity(backend)
     items = [
         (recipe, fixture, recipe_key(recipe, fixture.context, image_id, fidelity))

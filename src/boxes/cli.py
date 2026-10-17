@@ -17,6 +17,7 @@ from .harness import check_recipe
 from .images import PROJECT_ROOT, attacker_image, ensure_attacker_image, ensure_image, image_tag
 from .lint import lint
 from .manifest import materialize
+from .nethelper import NetError, down as net_down, up as net_up
 from .planner import generate, generate_paths, satisfies
 from .registry import load_registry, select
 from .runner import verify_machine, verify_recipes
@@ -364,6 +365,19 @@ def cmd_verify(args) -> int:
     return 0 if harness_failures == 0 and ok == len(results) else 1
 
 
+def cmd_net(args) -> int:
+    try:
+        if args.net_command == "up":
+            info = net_up(args.name, args.attacker_pid, args.user, args.vm_ip, args.attacker_ip)
+            print(json.dumps(info))
+        else:
+            print(json.dumps(net_down(args.name)))
+    except NetError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="boxes", description="HTB-style machine generator (P0)")
     p.add_argument("--recipes", default=str(DEFAULT_RECIPES), help="recipe directory")
@@ -434,6 +448,19 @@ def build_parser() -> argparse.ArgumentParser:
     v.add_argument("--clear-cache", action="store_true", dest="clear_cache",
                    help="clear the verification cache before running")
     v.set_defaults(func=cmd_verify)
+
+    net = sub.add_parser("net", help="privileged VM network helper (run with sudo)")
+    net_sub = net.add_subparsers(dest="net_command", required=True)
+    nu = net_sub.add_parser("up", help="create bridge + tap + attacker veth")
+    nu.add_argument("name")
+    nu.add_argument("--attacker-pid", type=int, required=True, dest="attacker_pid")
+    nu.add_argument("--user", default=None, help="user that owns the tap (default: SUDO_USER)")
+    nu.add_argument("--vm-ip", default="10.66.1.2", dest="vm_ip")
+    nu.add_argument("--attacker-ip", default="10.66.1.3", dest="attacker_ip")
+    nu.set_defaults(func=cmd_net)
+    nd = net_sub.add_parser("down", help="remove bridge + tap + veth")
+    nd.add_argument("name")
+    nd.set_defaults(func=cmd_net)
 
     return p
 

@@ -240,12 +240,23 @@ def test_container_names_stay_within_the_dns_hostname_limit():
             assert len(_container_name(role, rid)) <= 63
 
 
-def test_vm_backend_refuses_attacker_context(tmp_path):
-    rec = make_recipe(tmp_path, "net-on-vm", fidelity="vm")
+
+def test_vm_attacker_network_failure_is_a_warning_not_a_crash(tmp_path, monkeypatch):
+    import boxes.runner as runner
+    from boxes.backends.base import ExecResult
+
+    class FailingNet(FakeBackend):
+        fidelity = "vm"
+
+        def network_create(self, name, attacker_pid=None):
+            return ExecResult(1, "", "sudo: a password is required")
+
+    rec = make_recipe(tmp_path, "vm-net", fidelity="vm")
     rec.poc_context = "attacker"
-    backend = FakeBackend()
-    backend.fidelity = "vm"
-    result = verify_recipe(rec, fixture(u="x"), backend, "img:test")
+
+    monkeypatch.setattr(runner, "_attacker_backend", lambda backend: FakeBackend())
+    result = verify_recipe(rec, fixture(u="x", p="y"), FailingNet(), "img:test")
+
     assert not result.ok
-    assert "attacker-context" in result.error
-    assert backend.calls == []
+    assert "warning:" in result.error
+    assert "cannot be verified" in result.error
