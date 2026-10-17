@@ -286,6 +286,70 @@ sudo visudo -f /etc/sudoers.d/boxes
 user ALL=(root) NOPASSWD: /absolute/path/to/boxes net up *, /absolute/path/to/boxes net down *
 ```
 
+### Installing `boxes` so sudo can import it
+
+`sudo` resets `HOME` to `/root`, so an editable install in the user site
+(`~/.local/lib/...`) is invisible to root. The helper then fails with
+`ModuleNotFoundError: No module named 'boxes'`. Install the console script
+somewhere root can import it, and point the sudoers rule at that exact path.
+
+**System-wide editable install (simplest):**
+
+```bash
+# remove the user-site install first
+python3 -m pip uninstall -y boxes
+USER_SITE=$(python3 -c 'import site; print(site.getusersitepackages())')
+rm -f "$USER_SITE"/__editable__.boxes-* "$USER_SITE"/boxes-*.pth
+rm -rf "$USER_SITE"/boxes-*.dist-info
+rm -f ~/.local/bin/boxes
+
+sudo pip install --break-system-packages -e /path/to/boxes
+command -v boxes                     # usually /usr/local/bin/boxes
+```
+
+Use the path printed by `command -v boxes` in the sudoers rule. If you change
+install method, update the rule to match.
+
+**Venv (isolated, no system Python changes):**
+
+```bash
+python3 -m venv /opt/boxes-venv
+/opt/boxes-venv/bin/pip install -e /path/to/boxes
+```
+
+```
+user ALL=(root) NOPASSWD: /opt/boxes-venv/bin/boxes net up *, /opt/boxes-venv/bin/boxes net down *
+```
+
+```bash
+BOXES_BIN=/opt/boxes-venv/bin/boxes boxes verify --recipe vm-ssh-foothold --backend qemu
+```
+
+**Wrapper (no install at all):**
+
+```bash
+sudo tee /usr/local/bin/boxes-root >/dev/null <<'EOF'
+#!/bin/sh
+export PYTHONPATH=/path/to/boxes/src
+exec /usr/bin/python3 -m boxes "$@"
+EOF
+sudo chmod 0755 /usr/local/bin/boxes-root
+```
+
+```
+user ALL=(root) NOPASSWD: /usr/local/bin/boxes-root net up *, /usr/local/bin/boxes-root net down *
+```
+
+```bash
+BOXES_BIN=/usr/local/bin/boxes-root boxes verify --recipe vm-ssh-foothold --backend qemu
+```
+
+Check the privilege path on its own before running a VM:
+
+```bash
+sudo -n /absolute/path/to/boxes net down testrule   # {"machine": "testrule", "removed": true}
+```
+
 ```bash
 boxes verify --recipe vm-ssh-foothold --backend qemu --no-cache
 ```
