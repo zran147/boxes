@@ -213,7 +213,7 @@ PYTHONPATH=src python3 -m boxes verify --all --clear-cache  # wipe first
 
 `--jobs` parallelizes independent recipe containers. Chain verification is
 sequential because every step depends on the previous ones. Timings here:
-10 recipes cold with 4 jobs ≈ 4 s; warm cache ≈ 0.3 s.
+10 recipes cold with 4 jobs ≈ 9 s; warm cache ≈ 0.3 s.
 
 ### Recipe assets
 

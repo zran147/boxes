@@ -75,7 +75,7 @@ class DockerBackend:
             "--name",
             name,
             "--hostname",
-            alias or name,
+            alias or "sandbox",
             "--network",
             network,
         ]

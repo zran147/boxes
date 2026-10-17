@@ -89,3 +89,9 @@ def test_open_port_must_be_concrete():
     r = _mk(requires=[parse_fact("open_port($h, $p)")])
     errs = lint([r])
     assert any("concrete integer port" in e for e in errs)
+
+
+def test_poc_context_is_validated():
+    r = _mk(poc_context="moon")
+    errs = lint([r])
+    assert any("poc.context" in e for e in errs)

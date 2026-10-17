@@ -230,3 +230,11 @@ def test_machine_shares_one_attacker_container_across_the_chain(tmp_path):
     assert len(poc_execs) == 2
     assert all(c[1] == attacker for c in poc_execs)
     assert all(c[4]["BOX_HOST"] == "target" for c in poc_execs)
+
+
+def test_container_names_stay_within_the_dns_hostname_limit():
+    from boxes.runner import _container_name
+
+    for rid in ["a" * 120, "x" * 60, "normal-id"]:
+        for role in ("target", "attacker"):
+            assert len(_container_name(role, rid)) <= 63

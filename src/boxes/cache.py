@@ -22,6 +22,10 @@ from .manifest import Manifest
 from .planner import Plan
 
 CACHE_VERSION = 1
+# Bump this whenever verification *semantics* change (not recipe content), e.g.
+# moving PoCs from the target to the attacker container. Without it, old cache
+# entries would wrongly survive a runner change.
+SEMANTICS_VERSION = 2
 
 
 def _h(*parts) -> "hashlib._Hash":
@@ -35,6 +39,7 @@ def _h(*parts) -> "hashlib._Hash":
 def recipe_key(recipe, ctx: dict, image_id: str, fidelity: str) -> str:
     h = _h(
         "recipe-v1",
+        SEMANTICS_VERSION,
         recipe.id,
         image_id,
         fidelity,
@@ -52,6 +57,7 @@ def recipe_key(recipe, ctx: dict, image_id: str, fidelity: str) -> str:
 def machine_key(plan: Plan, manifest: Manifest, image_id: str, fidelity: str) -> str:
     h = _h(
         "machine-v1",
+        SEMANTICS_VERSION,
         plan.os_name,
         plan.seed,
         manifest.build_seed,

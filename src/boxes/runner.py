@@ -59,7 +59,7 @@ class VerifyResult:
 
 
 def _container_name(prefix: str, label: str) -> str:
-    safe = _SAFE.sub("-", label)[:40].strip("-") or "x"
+    safe = _SAFE.sub("-", label)[:32].strip("-") or "x"
     return f"boxes-{prefix}-{safe}-{uuid4().hex[:8]}"
 
 

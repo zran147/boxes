@@ -239,7 +239,7 @@ def cmd_verify(args) -> int:
         return 2
 
     pairs = []
-    failures = 0
+    harness_failures = 0
     for r in targets:
         if not r.verifiable:
             print(f"SKIP {r.id} (symbolic only: no provision/poc)")
@@ -247,7 +247,7 @@ def cmd_verify(args) -> int:
         fixture = check_recipe(r, args.seed).fixture
         if fixture is None:
             print(f"FAIL {r.id}: harness produced no fixture", file=sys.stderr)
-            failures += 1
+            harness_failures += 1
             continue
         pairs.append((r, fixture))
 
@@ -267,11 +267,12 @@ def cmd_verify(args) -> int:
     for result in results:
         _print_verify(result)
 
-    failures += sum(0 if r.ok else 1 for r in results)
+    ok = sum(1 for r in results if r.ok)
+    total = len(results) + harness_failures
     cached = sum(1 for r in results if r.cached)
     suffix = f" ({cached} cached)" if cached else ""
-    print(f"\n{len(results) - failures}/{len(results)} recipe(s) verified{suffix}")
-    return 0 if failures == 0 else 1
+    print(f"\n{ok}/{total} recipe(s) verified{suffix}")
+    return 0 if harness_failures == 0 and ok == len(results) else 1
 
 
 def build_parser() -> argparse.ArgumentParser:

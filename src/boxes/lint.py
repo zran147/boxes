@@ -52,4 +52,10 @@ def lint(recipes: list[Recipe]) -> list[str]:
                 errs.append(
                     f"{r.id}: actor {r.actor} is not bound by requires or params"
                 )
+
+        if getattr(r, "poc_context", "target") not in {"target", "attacker"}:
+            errs.append(
+                f"{r.id}: poc.context must be 'target' or 'attacker', "
+                f"got {r.poc_context!r}"
+            )
     return errs
