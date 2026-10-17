@@ -26,7 +26,6 @@ write_enable=NO
 local_root=/srv/ftp
 anon_root=/srv/ftp
 pasv_enable=YES
-pasv_address=127.0.0.1
 pasv_min_port=30000
 pasv_max_port=30010
 secure_chroot_dir=/var/run/vsftpd/empty
