@@ -4,11 +4,10 @@ kind: discovery
 description: "Provisioning smoke test: install a package through the proxy."
 os: ["ubuntu-*"]
 difficulty: 0.1
-fidelity: vm
 provision: ./provision.sh
 poc:
-  script: ./poc.sh
   context: target
+  vm: ./poc.sh
 actor: boxes
 poc_timeout: 120
 requires:

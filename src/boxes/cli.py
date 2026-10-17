@@ -28,7 +28,7 @@ from .nethelper import (
 )
 from .planner import generate, generate_paths, satisfies
 from .registry import load_registry, select
-from .runner import verify_machine, verify_recipes
+from .runner import verify_machine, verify_paths, verify_recipes
 from .scaffold import create_recipe
 from .vm_image import prepare_base
 from .writeup import paths_to_dict, plan_to_dict, render_machine_markdown, render_markdown
@@ -282,21 +282,33 @@ def cmd_verify(args) -> int:
                 )
             manifests = [materialize(path, build_seed) for path in paths]
             print(f"base plan seed={args.seed} build seed={build_seed} paths={len(paths)}")
-            ok = True
+            entries = []
             for index, (path, manifest) in enumerate(zip(paths, manifests), 1):
                 if not satisfies(path):
                     print(f"internal error: path {index} does not satisfy itself", file=sys.stderr)
                     return 3
                 print(f"path {index} (seed {path.seed}): " + " -> ".join(s.recipe.id for s in path.steps))
                 key = machine_key(path, manifest, image_id, backend.fidelity)
-                if cache.get(key) is not None:
+                entries.append((path, manifest, key, cache.get(key) is not None))
+
+            todo = [entry for entry in entries if not entry[3]]
+            ok = True
+            if todo:
+                results = verify_paths(
+                    [entry[0] for entry in todo],
+                    [entry[1] for entry in todo],
+                    backend,
+                    image,
+                    keep=args.keep,
+                )
+                for (path, manifest, key, _), result in zip(todo, results):
+                    _print_verify(result)
+                    if result.ok:
+                        cache.put(key, {"plan_seed": path.seed, "build_seed": build_seed})
+                    ok = ok and result.ok
+            for index, (path, manifest, key, hit) in enumerate(entries, 1):
+                if hit:
                     print(f"path {index} already verified (cache hit)")
-                    continue
-                result = verify_machine(path, manifest, backend, image, keep=args.keep)
-                _print_verify(result)
-                if result.ok:
-                    cache.put(key, {"plan_seed": path.seed, "build_seed": build_seed})
-                ok = ok and result.ok
             return 0 if ok else 1
 
         plan = generate(pool, args.os, args.to_user, args.to_root, args.seed)
@@ -339,8 +351,8 @@ def cmd_verify(args) -> int:
         if not r.verifiable:
             print(f"SKIP {r.id} (symbolic only: no provision/poc)")
             continue
-        if r.fidelity != backend.fidelity:
-            print(f"SKIP {r.id} (fidelity {r.fidelity} on {backend.fidelity} backend)")
+        if not r.supports(backend.fidelity):
+            print(f"SKIP {r.id} (no PoC for the {backend.fidelity} backend)")
             continue
         fixture = check_recipe(r, args.seed).fixture
         if fixture is None:

@@ -4,11 +4,10 @@ kind: foothold
 description: Reuse credentials to get an SSH shell on a real VM.
 os: ["ubuntu-*"]
 difficulty: 0.3
-fidelity: vm
 provision: ./provision.sh
 poc:
-  script: ./poc.sh
   context: attacker
+  vm: ./poc.sh
 poc_timeout: 120
 yields: ["user"]
 requires:

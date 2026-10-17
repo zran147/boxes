@@ -38,12 +38,13 @@ class Recipe:
     params: dict[str, ParamSpec]
     walkthrough: str
     description: str = ""
-    # --- P1 build/verify metadata -----------------------------------------
-    # "container" recipes can be realised by the fast path (Docker/Incus);
-    # "vm" recipes need a real kernel and are P1-vm territory.
-    fidelity: str = "container"
+    # --- build/verify metadata --------------------------------------------
+    # A recipe can provide separate PoCs for the container proxy and the VM
+    # product. `fidelity`/`poc` are the legacy single-backend form.
+    fidelity: str | None = None
     provision: str | None = None  # script, run as root inside the target
-    poc: str | None = None  # script, run as the actor; exit 0 = proven
+    poc: str | None = None  # legacy single PoC
+    poc_scripts: dict[str, str] = field(default_factory=dict)  # backend -> script
     actor: str | None = None  # "$var" resolved from context, default "attacker"
     poc_context: str = "target"  # "target" | "attacker" (run from the attacker box)
     poc_timeout: int = 120
@@ -66,13 +67,38 @@ class Recipe:
         return self.dir / self.assets if self.assets else None
 
     @property
-    def verifiable(self) -> bool:
-        return self.provision is not None and self.poc is not None
+    def fidelities(self) -> list[str]:
+        if self.poc_scripts:
+            return sorted(self.poc_scripts)
+        if self.fidelity:
+            return [self.fidelity]
+        return ["container"]
 
-    def script(self, kind: str) -> Path:
-        rel = self.provision if kind == "provision" else self.poc
+    def supports(self, fidelity: str) -> bool:
+        if self.poc_scripts:
+            return fidelity in self.poc_scripts
+        if self.fidelity:
+            return self.fidelity == fidelity
+        return fidelity == "container"
+
+    def poc_script(self, fidelity: str) -> str | None:
+        if self.poc_scripts:
+            return self.poc_scripts.get(fidelity)
+        if self.fidelity is None or self.fidelity == fidelity:
+            return self.poc
+        return None
+
+    @property
+    def verifiable(self) -> bool:
+        return self.provision is not None and (bool(self.poc_scripts) or self.poc is not None)
+
+    def script(self, kind: str, fidelity: str | None = None) -> Path:
+        if kind == "provision":
+            rel = self.provision
+        else:
+            rel = self.poc_script(fidelity or self.fidelity or "container")
         if rel is None:
-            raise ValueError(f"{self.id}: no {kind} script")
+            raise ValueError(f"{self.id}: no {kind} script for {fidelity!r}")
         return self.dir / rel
 
     def param_vars(self) -> set[str]:
@@ -134,30 +160,41 @@ def load_recipe(path: Path) -> Recipe:
         )
 
     base_dir = path.parent
-    fidelity = str(data.get("fidelity", "container"))
-    if fidelity not in {"container", "vm"}:
-        raise ValueError(f"{rid}: fidelity must be 'container' or 'vm', got {fidelity!r}")
+    fidelity = data.get("fidelity")
+    if fidelity is not None:
+        fidelity = str(fidelity)
+        if fidelity not in {"container", "vm"}:
+            raise ValueError(f"{rid}: fidelity must be 'container' or 'vm', got {fidelity!r}")
     provision = data.get("provision")
     poc_data = data.get("poc")
     poc: str | None = None
+    poc_scripts: dict[str, str] = {}
     poc_context = "target"
     if isinstance(poc_data, str):
         poc = poc_data
     elif isinstance(poc_data, dict):
-        poc = poc_data.get("script")
         poc_context = str(poc_data.get("context", "target"))
-        if not poc:
-            raise ValueError(f"{rid}: poc needs a 'script' entry")
+        if "script" in poc_data:
+            poc = str(poc_data["script"])
+        for backend in ("container", "vm"):
+            if backend in poc_data:
+                poc_scripts[backend] = str(poc_data[backend])
     elif poc_data is not None:
-        raise ValueError(f"{rid}: poc must be a path or a mapping with script/context")
+        raise ValueError(f"{rid}: poc must be a path or a mapping with script/context or container/vm")
+
+    if not poc_scripts and poc is not None:
+        # legacy form: a single PoC, placed on the declared fidelity (or container)
+        poc_scripts[fidelity if fidelity in ("container", "vm") else "container"] = poc
     if poc_context not in {"target", "attacker"}:
         raise ValueError(f"{rid}: poc.context must be 'target' or 'attacker', got {poc_context!r}")
 
-    for phase, rel in (("provision", provision), ("poc", poc)):
-        if rel is not None and not (base_dir / str(rel)).is_file():
-            raise ValueError(f"{rid}: {phase} script not found: {base_dir / str(rel)}")
-    if (provision is None) != (poc is None):
-        raise ValueError(f"{rid}: provision and poc must be provided together")
+    for backend, rel in poc_scripts.items():
+        if not (base_dir / rel).is_file():
+            raise ValueError(f"{rid}: poc.{backend} script not found: {base_dir / rel}")
+    if provision is not None and not (base_dir / str(provision)).is_file():
+        raise ValueError(f"{rid}: provision script not found: {base_dir / str(provision)}")
+    if bool(poc_scripts) != (provision is not None):
+        raise ValueError(f"{rid}: provision and at least one poc script must be provided together")
     poc_timeout = int(data.get("poc_timeout", 120))
     if poc_timeout <= 0:
         raise ValueError(f"{rid}: poc_timeout must be positive, got {poc_timeout}")
@@ -183,6 +220,7 @@ def load_recipe(path: Path) -> Recipe:
         fidelity=fidelity,
         provision=str(provision) if provision else None,
         poc=str(poc) if poc else None,
+        poc_scripts=poc_scripts,
         actor=str(data["actor"]) if data.get("actor") is not None else None,
         poc_context=poc_context,
         poc_timeout=poc_timeout,

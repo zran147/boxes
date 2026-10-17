@@ -4,11 +4,10 @@ kind: discovery
 description: Directory brute force against the web server discovers a hidden endpoint.
 os: ["ubuntu-*", "debian-*"]
 difficulty: 0.2
-fidelity: container
 provision: ./provision.sh
 poc:
-  script: ./poc.sh
   context: attacker
+  container: ./poc.sh
 requires:
   - open_port($h, 80)
 provides:

@@ -4,11 +4,10 @@ kind: creds
 description: An exposed .env file on the web server leaks service credentials.
 os: ["ubuntu-*", "debian-*"]
 difficulty: 0.2
-fidelity: container
 provision: ./provision.sh
 poc:
-  script: ./poc.sh
   context: attacker
+  container: ./poc.sh
 requires:
   - open_port($h, 80)
 provides:

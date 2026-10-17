@@ -4,11 +4,11 @@ kind: privesc
 description: A sudoers misconfiguration allows running an interpreter as root.
 os: ["ubuntu-*", "debian-*"]
 difficulty: 0.3
-fidelity: container
 provision: ./provision.sh
 poc:
-  script: ./poc.sh
   context: target
+  container: ./poc.sh
+  vm: ./poc.sh
 actor: $u
 yields: ["root"]
 requires:

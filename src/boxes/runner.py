@@ -32,7 +32,7 @@ from .proxy import PROXY_IP, PROXY_PORT
 from . import proxy as proxy_mod
 from .recipe import Recipe
 
-PROVISION_TIMEOUT = 300
+PROVISION_TIMEOUT = 900
 _SAFE = re.compile(r"[^A-Za-z0-9_.-]")
 
 
@@ -142,9 +142,10 @@ def _run_script(
     timeout: int,
     host: str = "127.0.0.1",
     proxy: bool = False,
+    fidelity: str | None = None,
 ) -> ExecResult:
     try:
-        script = recipe.script(phase).read_text()
+        script = recipe.script(phase, fidelity).read_text()
     except (OSError, ValueError) as e:
         return ExecResult(2, "", str(e))
     return backend.exec(
@@ -288,6 +289,7 @@ def _poc(
     os_name: str,
     result: VerifyResult,
 ) -> None:
+    fidelity = _backend_fidelity(backend)
     if _attacker_for(recipe):
         extra = _copy_assets(setup.attacker_backend, setup.attacker, recipe)
         if not extra.ok:
@@ -302,6 +304,7 @@ def _poc(
             "attacker",
             recipe.poc_timeout,
             host=setup.host,
+            fidelity=fidelity,
         )
         result.add(_to_step(recipe, "poc", res, actor="attacker"))
         return
@@ -320,6 +323,7 @@ def _poc(
         actor,
         recipe.poc_timeout,
         host="127.0.0.1",
+        fidelity=fidelity,
     )
     result.add(_to_step(recipe, "poc", res, actor=actor))
 
@@ -336,11 +340,11 @@ def verify_recipe(
         result.ok = False
         result.error = "recipe has no provision/poc scripts (symbolic-only)"
         return result
-    if recipe.fidelity != _backend_fidelity(backend):
+    if not recipe.supports(_backend_fidelity(backend)):
         result.ok = False
         result.error = (
-            f"recipe needs a {recipe.fidelity} backend, "
-            f"but {backend.name} is {_backend_fidelity(backend)}"
+            f"recipe has no poc.vm/poc.container for the "
+            f"{_backend_fidelity(backend)} backend"
         )
         return result
 
@@ -353,6 +357,7 @@ def verify_recipe(
     result.attacker = setup.attacker
     result.kept = keep
 
+    snapshot_ok = False
     try:
         ctx = dict(fixture.context)
         ctx.setdefault("os", fixture.os)
@@ -369,8 +374,19 @@ def verify_recipe(
                 result.add(
                     StepResult(recipe.id, "seal", sealed.ok, sealed.exit_code, sealed.output())
                 )
+            if hasattr(backend, "snapshot"):
+                snap = backend.snapshot(setup.target, "pre-poc")
+                result.add(
+                    StepResult(recipe.id, "snapshot", snap.ok, snap.exit_code, snap.output())
+                )
+                snapshot_ok = snap.ok
             _poc(backend, setup, recipe, ctx, fixture.os, result)
     finally:
+        if snapshot_ok and hasattr(backend, "restore"):
+            rest = backend.restore(setup.target, "pre-poc")
+            result.add(
+                StepResult(recipe.id, "restore", rest.ok, rest.exit_code, rest.output())
+            )
         _teardown(backend, setup, keep)
     return result
 
@@ -391,9 +407,9 @@ def verify_machine(
         return result
 
     incompatible = [
-        f"{s.recipe.id} ({s.recipe.fidelity})"
+        f"{s.recipe.id} ({','.join(s.recipe.fidelities)})"
         for s in plan.steps
-        if s.recipe.fidelity != _backend_fidelity(backend)
+        if not s.recipe.supports(_backend_fidelity(backend))
     ]
     if incompatible:
         result.ok = False
@@ -414,6 +430,7 @@ def verify_machine(
     result.kept = keep
 
     contexts = []
+    snapshot_ok = False
     try:
         for step in plan.steps:
             ctx = dict(manifest.step_context(step))
@@ -431,11 +448,100 @@ def verify_machine(
             sealed = backend.seal(setup.target)
             result.add(StepResult("machine", "seal", sealed.ok, sealed.exit_code, sealed.output()))
 
+        if hasattr(backend, "snapshot"):
+            snap = backend.snapshot(setup.target, "pre-poc")
+            result.add(StepResult("machine", "snapshot", snap.ok, snap.exit_code, snap.output()))
+            snapshot_ok = snap.ok
+
         for step, ctx in zip(plan.steps, contexts):
             _poc(backend, setup, step.recipe, ctx, plan.os_name, result)
     finally:
+        if snapshot_ok and hasattr(backend, "restore"):
+            rest = backend.restore(setup.target, "pre-poc")
+            result.add(StepResult("machine", "restore", rest.ok, rest.exit_code, rest.output()))
         _teardown(backend, setup, keep)
     return result
+
+
+def verify_paths(
+    paths: list[Plan],
+    manifests: list[Manifest],
+    backend: Backend,
+    image: str,
+    keep: bool = False,
+) -> list[VerifyResult]:
+    """Verify multiple paths on one VM boot using snapshots.
+
+    Falls back to one machine per path for containers or when a path needs an
+    attacker-context PoC (attacker reset across paths is not wired yet).
+    """
+    fallback = (
+        _backend_fidelity(backend) != "vm"
+        or not hasattr(backend, "snapshot")
+        or any(_attacker_for(s.recipe) for p in paths for s in p.steps)
+    )
+    if fallback:
+        return [
+            verify_machine(path, manifest, backend, image, keep=keep)
+            for path, manifest in zip(paths, manifests)
+        ]
+
+    base_label = f"paths seed={paths[0].seed}"
+    setup, err = _setup(backend, base_label, image, False, keep)
+    if setup is None:
+        failed = VerifyResult(label=base_label)
+        failed.ok = False
+        failed.error = err
+        return [failed for _ in paths]
+
+    results: list[VerifyResult] = []
+    try:
+        clean = backend.snapshot(setup.target, "clean")
+        if not clean.ok:
+            for path in paths:
+                failed = VerifyResult(label=f"path seed={path.seed}")
+                failed.ok = False
+                failed.error = f"could not snapshot clean state: {clean.output()}"
+                results.append(failed)
+            return results
+
+        for index, (path, manifest) in enumerate(zip(paths, manifests), 1):
+            result = VerifyResult(label=f"path {index} seed={path.seed}")
+            if index > 1:
+                rest = backend.restore(setup.target, "clean")
+                result.add(StepResult("machine", "restore-clean", rest.ok, rest.exit_code, rest.output()))
+                if not rest.ok:
+                    results.append(result)
+                    continue
+
+            contexts = []
+            for step in path.steps:
+                ctx = dict(manifest.step_context(step))
+                ctx.setdefault("os", path.os_name)
+                contexts.append(ctx)
+                assets = _copy_assets(backend, setup.target, step.recipe)
+                result.add(_to_step(step.recipe, "assets", assets))
+                res = _run_script(
+                    backend, setup.target, step.recipe, "provision", ctx, path.os_name, None,
+                    PROVISION_TIMEOUT, proxy=setup.provision,
+                )
+                result.add(_to_step(step.recipe, "provision", res))
+
+            if setup.provision and hasattr(backend, "seal"):
+                sealed = backend.seal(setup.target)
+                result.add(StepResult("machine", "seal", sealed.ok, sealed.exit_code, sealed.output()))
+
+            snap = backend.snapshot(setup.target, "pre-poc")
+            result.add(StepResult("machine", "snapshot", snap.ok, snap.exit_code, snap.output()))
+            if snap.ok:
+                for step, ctx in zip(path.steps, contexts):
+                    _poc(backend, setup, step.recipe, ctx, path.os_name, result)
+                rest = backend.restore(setup.target, "pre-poc")
+                result.add(StepResult("machine", "restore", rest.ok, rest.exit_code, rest.output()))
+            results.append(result)
+    finally:
+        _teardown(backend, setup, keep)
+    return results
 
 
 def verify_recipes(

@@ -27,5 +27,5 @@ def load_registry(root: str | Path) -> list[Recipe]:
 def select(recipes: list[Recipe], os_name: str, fidelity: str | None = None) -> list[Recipe]:
     out = [r for r in recipes if r.applies_to(os_name)]
     if fidelity is not None:
-        out = [r for r in out if r.fidelity == fidelity]
+        out = [r for r in out if r.supports(fidelity)]
     return out

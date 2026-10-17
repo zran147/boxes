@@ -37,7 +37,7 @@ def backend():
     return b
 
 
-VERIFIABLE = [r.id for r in load_registry(RECIPES) if r.verifiable and r.fidelity == "container"]
+VERIFIABLE = [r.id for r in load_registry(RECIPES) if r.verifiable and r.supports("container")]
 
 
 @pytest.mark.parametrize("recipe_id", VERIFIABLE)

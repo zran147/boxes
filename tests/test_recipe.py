@@ -52,3 +52,21 @@ def test_invalid_poc_context_is_rejected(tmp_path):
 def test_poc_mapping_requires_script(tmp_path):
     with pytest.raises(ValueError):
         _write(tmp_path, "poc:\n  context: attacker")
+
+
+def test_poc_variants_enable_both_backends(tmp_path):
+    r = _write(
+        tmp_path,
+        "poc:\n  context: attacker\n  container: ./poc.sh\n  vm: ./poc.sh",
+    )
+    assert r.supports("container")
+    assert r.supports("vm")
+    assert r.script("poc", "container").name == "poc.sh"
+    assert r.script("poc", "vm").name == "poc.sh"
+
+
+def test_vm_only_poc_does_not_support_container(tmp_path):
+    r = _write(tmp_path, "poc:\n  context: attacker\n  vm: ./poc.sh")
+    assert r.supports("vm")
+    assert not r.supports("container")
+    assert r.script("poc", "vm").name == "poc.sh"

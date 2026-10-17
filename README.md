@@ -81,7 +81,8 @@ Container recipes (all verified end-to-end):
 
 VM recipes (QEMU, TCG-verified):
 
-- `vm-sudo-misconfig` — target-context sudo escalation on a real Ubuntu VM.
+- `sudo-misconfig-privesc` — target-context sudo escalation; has both container
+  and VM PoCs.
 - `vm-ssh-foothold` — attacker-context SSH foothold over a tap network
   (requires the `boxes net` sudoers helper).
 
@@ -173,13 +174,16 @@ walkthrough: |
 
 ### Backends
 
-- **Docker** (`--backend docker`, default) — target and attacker containers on a
-  per-machine `--internal` network. Fast path.
-- **QEMU** (`--backend qemu`) — a real VM, for `fidelity: vm` recipes.
+- **Docker** (`--backend docker`, default) — fast verification proxy: target and
+  attacker containers on a per-machine `--internal` network.
+- **QEMU** (`--backend qemu`) — the real product: a VM with the same
+  provisioning, plus snapshots.
 - **Fake** — in-memory, for unit tests.
 
-A recipe declares its fidelity and the verifier refuses mismatches: a
-`fidelity: vm` recipe is never tested in a container, and vice versa.
+The product is always a VM. `poc.container` is a fast verification proxy; a
+container pass is accepted without a VM re-run, provided the container and VM
+bases stay behaviourally aligned. `poc.vm` is for behaviour a container cannot
+reproduce (kernel/boot/init). A recipe with both can be verified on either.
 
 ```bash
 # one-time Docker images (target + attacker)
@@ -203,14 +207,20 @@ more tooling.
 ### Recipe verification contract
 
 ```yaml
-fidelity: container          # container | vm
-provision: ./provision.sh    # runs as root in the target; makes `requires` real
+provision: ./provision.sh    # shared; runs as root in the target
 poc:
-  script: ./poc.sh           # exit 0 = proven
   context: attacker          # attacker | target
+  container: ./poc.sh        # fast container verification (optional)
+  vm: ./poc-vm.sh            # VM variant (optional)
 actor: $u                    # target-context principal (default: attacker)
 poc_timeout: 120
 ```
+
+One recipe, no duplicates. `container` and `vm` are independent PoCs for the
+same step; a recipe with only `container` is container-verified, one with only
+`vm` is VM-verified. `verify --backend docker` skips recipes without a container
+PoC; `--backend qemu` skips recipes without a VM PoC. `verify --machine`
+requires every step to support the chosen backend.
 
 - `context: attacker` runs in the shared attacker container with `BOX_HOST` set
   to the target address (`target` on Docker, the tap IP on a VM). It cannot cheat
@@ -264,14 +274,19 @@ Pre-bake the base once (cloud-init is run once; subsequent boots skip it):
 
 ```bash
 boxes image build --backend qemu --os ubuntu-22.04
-boxes verify --recipe vm-sudo-misconfig --backend qemu
+boxes verify --recipe sudo-misconfig-privesc --backend qemu
 ```
 
 Measured on a TCG-only host: pre-bake ≈ 4m36s, cold verify ≈ 1m48s, warm cache
 ≈ 0.16s, `savevm` ≈ 2s, `loadvm` ≈ 7s.
 
-Snapshots (`savevm`/`loadvm`) let a provisioned VM be restored, which is the
-primitive for per-path verification on one boot.
+Snapshots (`savevm`/`loadvm`) let a provisioned VM be restored. VM verification
+takes a `pre-poc` snapshot after provisioning (and sealing), runs the PoCs, then
+`loadvm pre-poc` restores the provisioned state. Multi-path VM verification
+boots once: `savevm clean`, then for each path `loadvm clean` → provision →
+`savevm pre-poc` → PoCs → `loadvm pre-poc`. Attacker-context paths currently
+fall back to one machine per path because resetting the attacker container
+between snapshots is not wired yet.
 
 ### VM attacker PoCs (tap + bridge + veth)
 
@@ -381,6 +396,6 @@ The sudoers rule must allow the helper subcommands, hence `boxes net *`.
 |-------|-------|--------|
 | **P0** — symbolic generation | Facts + unification, typed predicates, recipes, bounded-length planner, `open_port` prelude, causal connectivity, two-seed manifest, lint, scaffold, per-recipe harness | **Done** |
 | **P1** — container fast path | Pluggable backend, target + attacker images, internal network, shared attacker container, provision/poc contract, assets, L2 + L3 verification, content-addressed cache, parallel jobs, real recipes | **Done** |
-| **P2** — fidelity + branching | QEMU + prebaked base + snapshots; target- and attacker-context PoCs verified under TCG; provisioning proxy on `br-provision` with egress-only phase and seal; independent multi-path (`--multi-path`); shared-prefix DAG next | **Partial** |
+| **P2** — fidelity + branching | QEMU + prebaked base + snapshots; `poc.container`/`poc.vm` per recipe; pre-PoC snapshot/restore; one-VM multi-path (`clean` + `pre-poc` snapshots, target-context); provisioning proxy on `br-provision` with egress-only phase and seal; shared-prefix DAG and attacker reset across VM paths next | **Partial** |
 | **P3** — coherence + scale | Difficulty budgets, themes, typed choices, more distros, a complete attacker toolkit | Planned |
 | **P4** — registry | Recipe registry API + client, signed recipes, sandboxed execution, per-recipe CI | Planned |

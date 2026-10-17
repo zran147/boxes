@@ -4,11 +4,10 @@ kind: discovery
 description: Post-exploitation enumeration finds an unusual SUID binary.
 os: ["ubuntu-*", "debian-*"]
 difficulty: 0.3
-fidelity: container
 provision: ./provision.sh
 poc:
-  script: ./poc.sh
   context: target
+  container: ./poc.sh
 actor: $u
 requires:
   - access_shell($u)

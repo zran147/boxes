@@ -18,4 +18,4 @@ RUN mkdir -p /var/cache/apt-cacher-ng \
 
 EXPOSE 3142
 
-CMD ["/usr/sbin/apt-cacher-ng", "-c", "/etc/apt-cacher-ng", "Foreground=yes"]
+CMD ["/usr/sbin/apt-cacher-ng", "-c", "/etc/apt-cacher-ng", "ForeGround=1"]

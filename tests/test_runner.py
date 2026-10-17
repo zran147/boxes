@@ -5,7 +5,7 @@ from boxes.backends.base import ExecResult
 from boxes.facts import parse_fact
 from boxes.harness import Fixture
 from boxes.recipe import Recipe
-from boxes.runner import build_env, resolve_actor, verify_machine, verify_recipe
+from boxes.runner import build_env, resolve_actor, verify_machine, verify_paths, verify_recipe
 
 
 def make_recipe(tmp_path, rid, *, actor=None, provision=True, poc=True, requires=None, fidelity="container"):
@@ -168,7 +168,7 @@ def test_vm_recipe_is_rejected_by_a_container_backend(tmp_path):
     backend = FakeBackend()
     result = verify_recipe(rec, fixture(u="x"), backend, "img:test")
     assert not result.ok
-    assert "vm backend" in result.error
+    assert "no poc.vm/poc.container" in result.error
     assert backend.calls == []
 
 
@@ -260,3 +260,92 @@ def test_vm_attacker_network_failure_is_a_warning_not_a_crash(tmp_path, monkeypa
     assert not result.ok
     assert "warning:" in result.error
     assert "cannot be verified" in result.error
+
+
+class FakeVMSnap(FakeBackend):
+    fidelity = "vm"
+
+    def __init__(self):
+        super().__init__()
+        self.snapshots = []
+        self.restores = []
+        self.seals = []
+
+    def snapshot(self, name, label):
+        self.snapshots.append(label)
+        return ExecResult(0, "", "")
+
+    def restore(self, name, label):
+        self.restores.append(label)
+        return ExecResult(0, "", "")
+
+    def seal(self, name):
+        self.seals.append(name)
+        return ExecResult(0, "", "")
+
+
+def _vm_recipe(tmp_path, rid):
+    d = tmp_path / rid
+    d.mkdir()
+    (d / "provision.sh").write_text("echo provision\n")
+    (d / "poc.sh").write_text("echo poc\n")
+    return Recipe(
+        id=rid, version="1.0.0", kind="privesc", os=["ubuntu-*"], difficulty=0.1,
+        requires=[parse_fact("open_port($h, 80)")],
+        provides=[parse_fact("access_root()")], yields=["root"],
+        params={}, walkthrough="", provision="provision.sh",
+        poc_scripts={"vm": "poc.sh"}, fidelity="vm", poc_context="target",
+        path=d / "recipe.yaml",
+    )
+
+
+def _vm_plan(recipe):
+    from boxes.planner import Plan, Step
+
+    return Plan(
+        "ubuntu-22.04",
+        [Step(recipe, f"{recipe.id}#0", {}, recipe.requires, recipe.provides, [])],
+        1,
+    )
+
+
+class _Ctx:
+    def step_context(self, step):
+        return {"os": "ubuntu-22.04"}
+
+
+def test_vm_machine_snapshots_before_pocs_and_restores_after(tmp_path, monkeypatch):
+    import boxes.runner as runner
+
+    monkeypatch.setattr(runner.proxy_mod, "is_up", lambda: False)
+    rec = _vm_recipe(tmp_path, "vm-only")
+    backend = FakeVMSnap()
+
+    result = verify_machine(_vm_plan(rec), _Ctx(), backend, "img:test")
+
+    assert result.ok
+    assert backend.snapshots == ["pre-poc"]
+    assert backend.restores == ["pre-poc"]
+    assert any(s.phase == "snapshot" for s in result.steps)
+
+
+def test_verify_paths_uses_one_vm_and_snapshots_per_path(tmp_path, monkeypatch):
+    import boxes.runner as runner
+
+    monkeypatch.setattr(runner.proxy_mod, "is_up", lambda: False)
+    r1 = _vm_recipe(tmp_path, "path-one")
+    r2 = _vm_recipe(tmp_path, "path-two")
+    backend = FakeVMSnap()
+
+    results = verify_paths(
+        [_vm_plan(r1), _vm_plan(r2)],
+        [_Ctx(), _Ctx()],
+        backend,
+        "img:test",
+    )
+
+    assert len(results) == 2
+    assert all(r.ok for r in results)
+    assert len([c for c in backend.calls if c[0] == "create"]) == 1
+    assert backend.snapshots == ["clean", "pre-poc", "pre-poc"]
+    assert backend.restores == ["pre-poc", "clean", "pre-poc"]
