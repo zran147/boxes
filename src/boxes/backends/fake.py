@@ -81,6 +81,10 @@ class FakeBackend:
         self.calls.append(("put", name, src, dst))
         return ExecResult(0, "", "")
 
+    def seal(self, name: str) -> ExecResult:
+        self.calls.append(("seal", name))
+        return ExecResult(0, "", "")
+
     def destroy(self, name: str) -> ExecResult:
         self.calls.append(("destroy", name))
         self.destroyed.append(name)

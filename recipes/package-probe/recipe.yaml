@@ -1,4 +1,4 @@
-id: vm-package-probe
+id: package-probe
 version: 1.0.0
 kind: discovery
 description: "Provisioning smoke test: install a package through the proxy."
@@ -7,8 +7,9 @@ difficulty: 0.1
 provision: ./provision.sh
 poc:
   context: target
+  container: ./poc.sh
   vm: ./poc.sh
-actor: boxes
+actor: attacker
 poc_timeout: 120
 requires:
   - open_port($h, 22)

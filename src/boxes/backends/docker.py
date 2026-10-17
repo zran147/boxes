@@ -100,7 +100,17 @@ class DockerBackend:
             "sleep",
             "infinity",
         ]
-        return self._run(args, timeout=180)
+        res = self._run(args, timeout=180)
+        if res.ok and provision:
+            net = self._run(["network", "connect", "boxes-provision", name], timeout=60)
+            if not net.ok:
+                self.destroy(name)
+                return net
+        return res
+
+    def seal(self, name: str) -> ExecResult:
+        """Disconnect the provisioning network before PoCs."""
+        return self._run(["network", "disconnect", "-f", "boxes-provision", name], timeout=60)
 
     def exec(
         self,

@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from boxes.backends import get_backend
+from boxes import proxy as proxy_mod
 from boxes.harness import check_recipe
 from boxes.images import ensure_image, image_tag
 from boxes.registry import load_registry
@@ -42,6 +43,8 @@ VERIFIABLE = [r.id for r in load_registry(RECIPES) if r.verifiable and r.support
 
 @pytest.mark.parametrize("recipe_id", VERIFIABLE)
 def test_recipe_verifies_in_a_real_container(backend, recipe_id):
+    if recipe_id == "package-probe" and not proxy_mod.is_up():
+        pytest.skip("provisioning proxy is not running (`boxes proxy up`)")
     recipe = next(r for r in load_registry(RECIPES) if r.id == recipe_id)
     fixture = check_recipe(recipe).fixture
     result = verify_recipe(recipe, fixture, backend, image_tag("ubuntu-22.04"))

@@ -77,7 +77,7 @@ def build_env(
     ctx: dict,
     os_name: str,
     host: str = "127.0.0.1",
-    proxy: bool = False,
+    proxy_url: str | None = None,
 ) -> dict[str, str]:
     env = {_env_key(key): str(value) for key, value in ctx.items()}
     # reserved keys always win over a recipe param with the same name
@@ -85,13 +85,12 @@ def build_env(
     env["BOX_OS"] = os_name
     env["BOX_ASSETS"] = f"/opt/boxes/{recipe.id}"
     env["BOX_HOST"] = host
-    if proxy:
-        url = f"http://{PROXY_IP}:{PROXY_PORT}"
-        env["BOX_PROXY_URL"] = url
-        env["http_proxy"] = url
-        env["https_proxy"] = url
-        env["HTTP_PROXY"] = url
-        env["HTTPS_PROXY"] = url
+    if proxy_url:
+        env["BOX_PROXY_URL"] = proxy_url
+        env["http_proxy"] = proxy_url
+        env["https_proxy"] = proxy_url
+        env["HTTP_PROXY"] = proxy_url
+        env["HTTPS_PROXY"] = proxy_url
         env["no_proxy"] = "localhost,127.0.0.1"
         env["NO_PROXY"] = "localhost,127.0.0.1"
     return env
@@ -141,7 +140,7 @@ def _run_script(
     user: str | None,
     timeout: int,
     host: str = "127.0.0.1",
-    proxy: bool = False,
+    proxy_url: str | None = None,
     fidelity: str | None = None,
 ) -> ExecResult:
     try:
@@ -152,7 +151,7 @@ def _run_script(
         container,
         script,
         user=user,
-        env=build_env(recipe, ctx, os_name, host=host, proxy=proxy),
+        env=build_env(recipe, ctx, os_name, host=host, proxy_url=proxy_url),
         timeout=timeout,
     )
 
@@ -205,7 +204,7 @@ class _Setup:
     host: str = "target"
     kept: bool = False
     provision: bool = False
-
+    proxy_url: str | None = None
 
 def _setup(
     backend: Backend,
@@ -215,7 +214,13 @@ def _setup(
     keep: bool,
 ) -> tuple[_Setup | None, str | None]:
     vm = _backend_fidelity(backend) == "vm"
-    provision = vm and proxy_mod.is_up()
+    proxy_up = proxy_mod.is_up()
+    provision = proxy_up
+    proxy_url = None
+    if proxy_up:
+        proxy_url = (
+            f"http://{PROXY_IP}:{PROXY_PORT}" if vm else "http://boxes-proxy:3142"
+        )
     setup = _Setup(
         target=_container_name("target", label),
         network=_network_name(label) if (needs_attacker or not vm) else None,
@@ -223,6 +228,7 @@ def _setup(
         attacker_backend=_attacker_backend(backend) if needs_attacker else None,
         kept=keep,
         provision=provision,
+        proxy_url=proxy_url,
     )
 
     # VM: the attacker container must exist before `boxes net up` (it needs the
@@ -365,7 +371,7 @@ def verify_recipe(
         result.add(_to_step(recipe, "assets", assets))
         prov = _run_script(
             backend, setup.target, recipe, "provision", ctx, fixture.os, None,
-            PROVISION_TIMEOUT, proxy=setup.provision,
+            PROVISION_TIMEOUT, proxy_url=setup.proxy_url,
         )
         result.add(_to_step(recipe, "provision", prov))
         if prov.ok:
@@ -440,7 +446,7 @@ def verify_machine(
             result.add(_to_step(step.recipe, "assets", assets))
             res = _run_script(
                 backend, setup.target, step.recipe, "provision", ctx, plan.os_name, None,
-                PROVISION_TIMEOUT, proxy=setup.provision,
+                PROVISION_TIMEOUT, proxy_url=setup.proxy_url,
             )
             result.add(_to_step(step.recipe, "provision", res))
 
@@ -523,7 +529,7 @@ def verify_paths(
                 result.add(_to_step(step.recipe, "assets", assets))
                 res = _run_script(
                     backend, setup.target, step.recipe, "provision", ctx, path.os_name, None,
-                    PROVISION_TIMEOUT, proxy=setup.provision,
+                    PROVISION_TIMEOUT, proxy_url=setup.proxy_url,
                 )
                 result.add(_to_step(step.recipe, "provision", res))
 
