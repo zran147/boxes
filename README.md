@@ -217,12 +217,16 @@ trusted first-party recipes; a public registry must sandbox harder.
 provision+poc; otherwise it reports which ones are symbolic-only rather than
 silently skipping them.
 
-## Not done yet (P2+)
+## Roadmap
 
-- QEMU backend (`fidelity: vm`) for kernel/boot-level recipes; snapshots.
-- Broaden parameter value sets only where provisioning+PoC support every value
-  (a random choice is only valid if provision and PoC handle it).
-- Per-recipe verification caching (fixtures/content hashes) and parallel runs.
-- Difficulty budgets and themes for coherence; multiple paths per flag (DAG
-  instead of a chain); more distros.
-- Registry API + signed recipes + sandboxed recipe execution.
+| Stage | Scope | Status |
+|-------|-------|--------|
+| **P0** — symbolic generation | Facts + unification, typed predicates, recipes, bounded-length planner, `open_port` prelude, causal-chain constraint, two-seed manifest, lint, `boxes new` scaffold, per-recipe harness | **Done** |
+| **P1** — container fast path | Pluggable backend (Docker + fake), base image, `provision`/`poc` contract, L2 minimal repro, L3 full-chain verification, real FTP/SSH/web/SUID/sudo recipes | **Done** |
+| **P2** — fidelity + branching | QEMU backend for `fidelity: vm` (kernel/boot-level recipes), snapshots, multiple paths per flag (DAG instead of a chain), separate-place credentials (`creds.uname` + `creds.pass` consumed independently) | **Next** |
+| **P3** — coherence + scale | Difficulty budgets, themes, typed choices (value sets constrained by what provision/PoC support), more distros, per-recipe verification caching and parallel runs | Planned |
+| **P4** — registry | Recipe registry API + client, signed recipes, sandboxed recipe execution, per-recipe CI | Planned |
+
+P1 delivered L3/manifest/flags earlier than originally planned, and swapped the
+QEMU-first build for a container fast path because this host has no nested virt
+(no `/dev/kvm`). QEMU remains the P2 backend for recipes that need a real kernel.
