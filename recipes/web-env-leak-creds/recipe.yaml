@@ -1,0 +1,20 @@
+id: web-env-leak-creds
+version: 1.0.0
+kind: creds
+description: An exposed .env file on the web server leaks service credentials.
+os: ["ubuntu-*", "debian-*"]
+difficulty: 0.2
+requires:
+  - net.port($h, 80)
+provides:
+  - creds(ssh, $leak_user, $leak_pass)
+params:
+  leak_user:
+    type: choice
+    values: ["ubuntu", "webmaster", "sysadmin"]
+  leak_pass:
+    type: password
+    length: 13
+walkthrough: |
+  Requesting `/.env` on the web server returns an unredacted file containing
+  database and SSH credentials: `{leak_user}` / `{leak_pass}`.

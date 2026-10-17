@@ -1,0 +1,16 @@
+id: ssh-creds-foothold
+version: 1.0.0
+kind: foothold
+description: Reuse discovered credentials to obtain an interactive SSH shell.
+os: ["ubuntu-*", "debian-*"]
+difficulty: 0.2
+yields: ["user"]
+requires:
+  - net.port($h, 22)
+  - creds(ssh, $u, $p)
+provides:
+  - access_shell($u)
+walkthrough: |
+  We reuse the credentials we already have (`{u}` / `{p}`) against SSH on port
+  22. They are valid and return an interactive shell as `{u}` — whose home
+  directory holds `user.txt`, so the user flag is read here.

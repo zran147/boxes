@@ -1,0 +1,19 @@
+id: web-rce-foothold
+version: 1.0.0
+kind: foothold
+description: Unauthenticated RCE on the exposed web application yields a reverse shell.
+os: ["ubuntu-*", "debian-*"]
+difficulty: 0.5
+yields: ["user"]
+requires:
+  - net.port($h, 8080)
+provides:
+  - access_shell($web_user)
+params:
+  web_user:
+    type: choice
+    values: ["www-data"]
+walkthrough: |
+  The app on port 8080 exposes an unauthenticated code-execution endpoint. We
+  point it at a reverse-shell payload and catch a shell as `{web_user}`, which
+  turns out to own `user.txt` — the user flag is read in a single step.

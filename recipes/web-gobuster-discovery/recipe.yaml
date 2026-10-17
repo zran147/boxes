@@ -1,0 +1,17 @@
+id: web-gobuster-discovery
+version: 1.0.0
+kind: discovery
+description: Directory brute force against the web server discovers a hidden endpoint.
+os: ["ubuntu-*", "debian-*"]
+difficulty: 0.2
+requires:
+  - net.port($h, 80)
+provides:
+  - knows(path, $path)
+params:
+  path:
+    type: choice
+    values: ["/admin.php", "/backup.zip", "/dev/", "/.git/"]
+walkthrough: |
+  Directory brute forcing on port 80 turns up `{path}`, which was not linked
+  anywhere on the site. (Discovery only — this tells us the endpoint exists.)

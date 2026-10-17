@@ -1,0 +1,16 @@
+id: suid-gtfobins-privesc
+version: 1.0.0
+kind: privesc
+description: Abuse the discovered SUID binary (GTFOBins) to escalate to root.
+os: ["ubuntu-*", "debian-*"]
+difficulty: 0.4
+yields: ["root"]
+requires:
+  - access_shell($u)
+  - knows(suid, $binary)
+provides:
+  - access_root()
+walkthrough: |
+  The SUID `{binary}` has a known GTFOBins escape. Running it with the right
+  arguments keeps effective UID 0 and gives us a root shell, exposing
+  `root.txt`.

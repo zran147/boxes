@@ -1,0 +1,189 @@
+"""Per-recipe test harness.
+
+A recipe is a unit: given a state that satisfies its ``requires``, applying it
+must produce its ``provides`` with every variable grounded. This module checks
+that symbolically -- no machine, no VM.
+
+The :class:`Fixture` it emits is deliberately the *bridge to P1*: it is the
+minimal concrete input a recipe needs, so the same fixture can later drive a
+minimal-repro VM and a real PoC run.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from random import Random
+
+from .facts import Fact, Var, SIGNATURES
+from .lint import lint
+from .manifest import generate_param
+from .planner import PRELUDE, TARGET, _applications, initial_state
+from .recipe import Recipe
+
+SAMPLE_OS = "ubuntu-22.04"
+_PLACEHOLDER = re.compile(r"\{([A-Za-z0-9_.]+)\}")
+_ID = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+
+
+@dataclass
+class Fixture:
+    recipe_id: str
+    os: str
+    params: dict
+    requires: list[str]
+    provides: list[str]
+    walkthrough: str
+
+    def to_dict(self) -> dict:
+        return {
+            "recipe": self.recipe_id,
+            "os": self.os,
+            "params": self.params,
+            "requires": self.requires,
+            "provides": self.provides,
+            "walkthrough": self.walkthrough,
+        }
+
+
+@dataclass
+class Result:
+    recipe_id: str
+    errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    fixture: Fixture | None = None
+
+    @property
+    def ok(self) -> bool:
+        return not self.errors
+
+
+def _ground(term, params: dict):
+    """Ground a fact term from a recipe's params; unknown vars get a sentinel."""
+    if isinstance(term, Var):
+        if term.name == "h":
+            return TARGET
+        if term.name in params:
+            return params[term.name]
+        return f"<{term.name}>"
+    return term
+
+
+def _ground_fact(f: Fact, params: dict) -> Fact:
+    return Fact(f.pred, tuple(_ground(a, params) for a in f.args))
+
+
+def _resolve_provides(provides, subst: dict, rid: str, params: dict):
+    """Ground a renamed, substituted provides fact. Returns (fact, ok)."""
+
+    def walk(t):
+        seen: set[str] = set()
+        while isinstance(t, Var) and t.name in subst and t.name not in seen:
+            seen.add(t.name)
+            t = subst[t.name]
+        return t
+
+    def resolve(t):
+        t = walk(t)
+        if isinstance(t, Var):
+            name = t.name
+            if name.startswith(f"{rid}."):
+                base = name[len(rid) + 1 :]
+                if base in params:
+                    return params[base]
+            return None
+        return t
+
+    out = []
+    ok = True
+    for f in provides:
+        args = tuple(resolve(a) for a in f.args)
+        if any(a is None for a in args):
+            ok = False
+        out.append(Fact(f.pred, args))
+    return out, ok
+
+
+def _render(template: str, ctx: dict) -> str:
+    return _PLACEHOLDER.sub(lambda m: str(ctx.get(m.group(1), m.group(0))), template)
+
+
+def check_recipe(recipe: Recipe, seed: int = 0) -> Result:
+    result = Result(recipe_id=recipe.id)
+    rng = Random(seed)
+
+    if not _ID.match(recipe.id):
+        result.errors.append(f"recipe id must match {_ID.pattern!r}")
+    if not (0.0 <= recipe.difficulty <= 1.0):
+        result.errors.append("difficulty must be within [0, 1]")
+    if not recipe.provides:
+        result.errors.append("recipe must declare at least one provides fact")
+    if not recipe.applies_to(SAMPLE_OS):
+        result.errors.append(f"recipe os {recipe.os} does not include sample OS {SAMPLE_OS}")
+        return result
+
+    result.errors.extend(lint([recipe]))
+
+    params = {name: generate_param(spec, rng) for name, spec in recipe.params.items()}
+    grounded_requires = [_ground_fact(f, params) for f in recipe.requires]
+    state = initial_state(SAMPLE_OS) + grounded_requires
+
+    apps = list(_applications(recipe, state, rng))
+    if not apps:
+        result.errors.append("recipe is not applicable in a state that satisfies its requires")
+        return result
+
+    _, provides, subst, _ = apps[0]
+    grounded_provides, ok = _resolve_provides(provides, subst, recipe.id, params)
+    if not ok:
+        result.errors.append(f"provides contain ungrounded variables: {', '.join(str(p) for p in provides)}")
+    for f in grounded_provides:
+        if f.pred not in SIGNATURES:
+            result.errors.append(f"unknown predicate {f.pred!r}")
+
+    ctx = dict(params)
+    for f in [*recipe.requires, *recipe.provides]:
+        for a in f.args:
+            if isinstance(a, Var):
+                base = a.name
+                if base == "h":
+                    ctx.setdefault(base, TARGET)
+                elif base in params:
+                    ctx[base] = params[base]
+                else:
+                    # supplied by a sibling recipe at generation time; isolate
+                    # the walkthrough with a readable placeholder
+                    ctx.setdefault(base, f"<{base}>")
+    text = _render(recipe.walkthrough, ctx)
+    leftovers = _PLACEHOLDER.findall(text)
+    if leftovers:
+        result.errors.append(f"walkthrough has unresolved placeholder(s): {sorted(set(leftovers))}")
+
+    # Negative test: without its non-prelude requirements the recipe must not apply.
+    non_prelude = [f for f in grounded_requires if f.pred not in PRELUDE]
+    if not non_prelude:
+        result.warnings.append(
+            "no negative test: recipe only has prelude requirements "
+            "(legitimate for a recipe that only needs network exposure)"
+        )
+    else:
+        reduced = [f for f in grounded_requires if f is not non_prelude[0]]
+        reduced_state = initial_state(SAMPLE_OS) + reduced
+        if list(_applications(recipe, reduced_state, Random(seed))):
+            result.errors.append(
+                f"recipe still applies without its requirement {non_prelude[0]} (guard is ineffective)"
+            )
+
+    result.fixture = Fixture(
+        recipe_id=recipe.id,
+        os=SAMPLE_OS,
+        params=params,
+        requires=[str(f) for f in grounded_requires],
+        provides=[str(f) for f in grounded_provides],
+        walkthrough=text,
+    )
+    return result
+
+
+def check_all(recipes: list[Recipe], seed: int = 0) -> list[Result]:
+    return [check_recipe(r, seed) for r in recipes]

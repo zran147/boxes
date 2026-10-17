@@ -1,0 +1,17 @@
+id: linpeas-suid-discovery
+version: 1.0.0
+kind: discovery
+description: Post-exploitation enumeration finds an unusual SUID binary.
+os: ["ubuntu-*", "debian-*"]
+difficulty: 0.3
+requires:
+  - access_shell($u)
+provides:
+  - knows(suid, $binary)
+params:
+  binary:
+    type: choice
+    values: ["nmap", "vim", "find", "bash", "less"]
+walkthrough: |
+  With a shell as `{u}` we run local enumeration and notice an unusual SUID
+  binary: `{binary}`. This is knowledge only — we still have to abuse it.

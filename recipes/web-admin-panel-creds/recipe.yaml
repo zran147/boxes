@@ -1,0 +1,22 @@
+id: web-admin-panel-creds
+version: 1.0.0
+kind: creds
+description: A discovered admin endpoint leaks credentials for another service.
+os: ["ubuntu-*", "debian-*"]
+difficulty: 0.3
+requires:
+  - net.port($h, 80)
+  - knows(path, $path)
+provides:
+  - creds(ssh, $admin_user, $admin_pass)
+params:
+  admin_user:
+    type: choice
+    values: ["admin", "webadmin"]
+  admin_pass:
+    type: password
+    length: 12
+walkthrough: |
+  The endpoint `{path}` we discovered is an admin panel. Its config file
+  leaks credentials for `{admin_user}` / `{admin_pass}`, which are reused
+  elsewhere on the box.

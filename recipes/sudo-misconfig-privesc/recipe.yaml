@@ -1,0 +1,18 @@
+id: sudo-misconfig-privesc
+version: 1.0.0
+kind: privesc
+description: A sudoers misconfiguration allows running an interpreter as root.
+os: ["ubuntu-*", "debian-*"]
+difficulty: 0.3
+yields: ["root"]
+requires:
+  - access_shell($u)
+provides:
+  - access_root()
+params:
+  binary:
+    type: choice
+    values: ["/usr/bin/find", "/usr/bin/vim", "/usr/bin/python3", "/usr/bin/awk"]
+walkthrough: |
+  `sudo -l` reveals that `{u}` may run `{binary}` as root without a password.
+  We use its escape sequence to spawn a root shell and read `root.txt`.

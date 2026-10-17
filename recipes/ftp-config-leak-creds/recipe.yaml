@@ -1,0 +1,20 @@
+id: ftp-config-leak-creds
+version: 1.0.0
+kind: creds
+description: Enumerate the accessible FTP share and find leaked SSH credentials.
+os: ["ubuntu-*", "debian-*"]
+difficulty: 0.2
+requires:
+  - service_access(ftp)
+provides:
+  - creds(ssh, $ssh_user, $ssh_pass)
+params:
+  ssh_user:
+    type: choice
+    values: ["deploy", "backup", "svc_web"]
+  ssh_pass:
+    type: password
+    length: 14
+walkthrough: |
+  Listing the FTP share reveals a `backup/.env` file with a hard-coded
+  credential. Reading it gives us SSH credentials: `{ssh_user}` / `{ssh_pass}`.

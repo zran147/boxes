@@ -1,0 +1,21 @@
+id: ftp-default-creds
+version: 1.0.0
+kind: service-access
+description: Log into FTP using a common/default credential pair.
+os: ["ubuntu-*", "debian-*"]
+difficulty: 0.1
+requires:
+  - net.port($h, 21)
+provides:
+  - service_access(ftp)
+params:
+  ftp_user:
+    type: choice
+    values: ["anonymous", "ftp", "admin"]
+  ftp_pass:
+    type: choice
+    values: ["", "ftp", "admin"]
+walkthrough: |
+  An FTP service is exposed on port 21. Trying the common credential
+  `{ftp_user}` / `{ftp_pass}` succeeds and drops us into the share, giving us
+  read access to its contents.
