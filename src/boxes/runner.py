@@ -183,6 +183,10 @@ def verify_recipe(
             f"but {backend.name} is {_backend_fidelity(backend)}"
         )
         return result
+    if recipe.poc_context == "attacker" and _backend_fidelity(backend) == "vm":
+        result.ok = False
+        result.error = "vm backend does not support attacker-context PoCs yet"
+        return result
 
     needs_attacker = _attacker_for(recipe)
     network = _network_name("recipe")
@@ -278,6 +282,18 @@ def verify_machine(
             f"incompatible recipes: {', '.join(incompatible)}"
         )
         return result
+
+    if _backend_fidelity(backend) == "vm":
+        unsupported = [
+            s.recipe.id for s in plan.steps if s.recipe.poc_context == "attacker"
+        ]
+        if unsupported:
+            result.ok = False
+            result.error = (
+                "vm backend does not support attacker-context PoCs yet: "
+                + ", ".join(unsupported)
+            )
+            return result
 
     needs_attacker = any(_attacker_for(s.recipe) for s in plan.steps)
     network = _network_name("machine")

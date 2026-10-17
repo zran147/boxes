@@ -238,3 +238,14 @@ def test_container_names_stay_within_the_dns_hostname_limit():
     for rid in ["a" * 120, "x" * 60, "normal-id"]:
         for role in ("target", "attacker"):
             assert len(_container_name(role, rid)) <= 63
+
+
+def test_vm_backend_refuses_attacker_context(tmp_path):
+    rec = make_recipe(tmp_path, "net-on-vm", fidelity="vm")
+    rec.poc_context = "attacker"
+    backend = FakeBackend()
+    backend.fidelity = "vm"
+    result = verify_recipe(rec, fixture(u="x"), backend, "img:test")
+    assert not result.ok
+    assert "attacker-context" in result.error
+    assert backend.calls == []
