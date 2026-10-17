@@ -10,7 +10,7 @@ poc: ./poc.sh
 yields: ["user"]
 requires:
   - net.port($h, 22)
-  - creds(ssh, $u, $p)
+  - creds($u, $p)
 provides:
   - access_shell($u)
 walkthrough: |

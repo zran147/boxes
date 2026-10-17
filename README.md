@@ -12,8 +12,17 @@ their PoCs to prove them (see "P1 fast path" below). Full-fidelity VMs are P2.
 ## Concepts
 
 - **Fact** — a typed atom describing world state, e.g. `net.port(target, 22)`,
-  `creds(ssh, deploy, hunter2)`, `access_shell(deploy)`. Predicate arities are
+  `creds(deploy, hunter2)`, `access_shell(deploy)`. Predicate arities are
   declared in `facts.SIGNATURES`; this is the *typed context*.
+- **Credentials** — `creds(user, password)` is a pair, `creds(user)` /
+  `creds(password)` are partials. `service_access(service)` is a capability;
+  `service_access(service, user, secret)` carries the credentials used. Recipes
+  that find creds normally provide the pair *and* both partials, so a consumer
+  can use whichever it needs (at least one provided fact must be consumed for
+  the step to count as part of the chain). Note: arity-1 `creds(x)` does not
+  record whether `x` is a user or a password; current recipes only consume the
+  pair, and the "creds found in different places" flow will need a tagged
+  partial form.
 - **Recipe** — an operator: `requires` (preconditions), `provides` (effects),
   randomizable `params`, and a `walkthrough` template. A recipe is a *template*;
   its params are grounded per-machine.
@@ -87,19 +96,20 @@ Two independent seeds:
 - `--build-seed` materialises the **values inside** those recipes — usernames,
   passwords, filenames, chosen binaries.
 
-If `--build-seed` is omitted it defaults to `--seed`, so one seed still
-reproduces a whole machine. Split them to get a *family*: same attack path,
-different flavour.
+If `--build-seed` is omitted it is chosen randomly, just like `--seed`; both
+seeds are printed so the exact machine can be reproduced. Give both to get a
+*family*: same attack path, different flavour.
 
 ```bash
 PYTHONPATH=src python3 -m boxes gen --seed 42 --build-seed 1   # path A, flavour 1
 PYTHONPATH=src python3 -m boxes gen --seed 42 --build-seed 2   # path A, flavour 2
 ```
 
-Values are derived per `(build_seed, recipe, parameter)` rather than drawn from
-one global stream, so adding or reordering a step does not scramble every other
-value. Recipe params can be `choice`, `password`, or `token` (for randomised
-filenames/identifiers).
+Values are derived per `(build_seed, step instance, parameter)` rather than
+drawn from one global stream. Plan variables are numbered by position
+(`ftp-config-leak-creds#1.ssh_user`), so multiple credential sets in one plan
+never collide. Recipe params can be `choice`, `password`, or `token` (for
+randomised filenames/identifiers).
 
 ## Recipe tooling and the test harness
 

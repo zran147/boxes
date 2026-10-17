@@ -58,6 +58,7 @@ def plan_to_dict(plan: Plan, manifest: Manifest) -> dict:
         steps.append(
             {
                 "index": i,
+                "instance": step.instance,
                 "recipe": r.id,
                 "version": r.version,
                 "kind": r.kind,

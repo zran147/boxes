@@ -33,6 +33,7 @@ PRELUDE = {"net.port", "os", "host"}
 @dataclass
 class Step:
     recipe: Recipe
+    instance: str  # e.g. "ftp-config-leak-creds#2" (numbered per plan position)
     subst: dict
     requires: list[Fact]  # renamed, ungrounded
     provides: list[Fact]  # renamed, substituted (still may hold Vars)
@@ -104,10 +105,10 @@ def _bind_requires(reqs: list[Fact], state: list[Fact], rng: random.Random) -> l
     return results
 
 
-def _applications(recipe: Recipe, state: list[Fact], rng: random.Random):
+def _applications(recipe: Recipe, state: list[Fact], rng: random.Random, instance: str):
     """Yield (requires, provides, subst, facts_to_add) for each valid binding."""
-    reqs = [rename_fact(f, recipe.id) for f in recipe.requires]
-    provs = [rename_fact(f, recipe.id) for f in recipe.provides]
+    reqs = [rename_fact(f, instance) for f in recipe.requires]
+    provs = [rename_fact(f, instance) for f in recipe.provides]
     for s in _bind_requires(reqs, state, rng):
         new: list[Fact] = [subst_fact(f, s) for f in provs]
         # assert the ports this recipe needs, so the inventory is complete
@@ -128,6 +129,7 @@ def _search(
     goal: str,
     rng: random.Random,
     recipes: list[Recipe],
+    step_no: int,
 ) -> list[Step] | None:
     if depth_left == 0:
         return None
@@ -141,12 +143,14 @@ def _search(
 
     rng.shuffle(pool)
     for recipe in pool:
-        for reqs, provs, subst, merged in _applications(recipe, state, rng):
+        instance = f"{recipe.id}#{step_no}"
+        for reqs, provs, subst, merged in _applications(recipe, state, rng, instance):
+            step = Step(recipe, instance, subst, reqs, provs, merged)
             if depth_left == 1:
-                return [Step(recipe, subst, reqs, provs, merged)]
-            rest = _search(merged, used | {recipe.id}, depth_left - 1, goal, rng, recipes)
+                return [step]
+            rest = _search(merged, used | {recipe.id}, depth_left - 1, goal, rng, recipes, step_no + 1)
             if rest is not None:
-                return [Step(recipe, subst, reqs, provs, merged), *rest]
+                return [step, *rest]
     return None
 
 
@@ -164,13 +168,13 @@ def generate(
     for _ in range(MAX_ATTEMPTS):
         state = initial_state(os_name)
 
-        user_steps = _search(state, set(), to_user, "user", rng, recipes)
+        user_steps = _search(state, set(), to_user, "user", rng, recipes, 0)
         if user_steps is None:
             continue
         used = {s.recipe.id for s in user_steps}
         mid_state = user_steps[-1].state
 
-        root_steps = _search(mid_state, used, to_root, "root", rng, recipes)
+        root_steps = _search(mid_state, used, to_root, "root", rng, recipes, to_user)
         if root_steps is None:
             continue
         plan = Plan(os_name=os_name, steps=[*user_steps, *root_steps], seed=seed)
@@ -210,7 +214,7 @@ def satisfies(plan: Plan) -> bool:
     """Re-simulate the plan and check every precondition was met in order."""
     state = initial_state(plan.os_name)
     for step in plan.steps:
-        reqs = [rename_fact(f, step.recipe.id) for f in step.recipe.requires]
+        reqs = [rename_fact(f, step.instance) for f in step.recipe.requires]
         subst: dict = {}
         for req in reqs:
             matched = None
@@ -231,7 +235,7 @@ def satisfies(plan: Plan) -> bool:
                     state = state + [assumed]
                     continue
                 return False
-        for f in [rename_fact(x, step.recipe.id) for x in step.recipe.provides]:
+        for f in [rename_fact(x, step.instance) for x in step.recipe.provides]:
             g = subst_fact(f, subst)
             if g not in state:
                 state = state + [g]

@@ -56,7 +56,9 @@ difficulty: {difficulty}
 requires:
   - net.port($h, 80)
 provides:
-  - creds(ssh, $user, $pass)
+  - creds($user, $pass)
+  - creds($user)
+  - creds($pass)
 params:
   user:
     type: choice

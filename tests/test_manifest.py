@@ -44,16 +44,16 @@ def test_plan_seed_reproduces_the_chain():
     assert [s.recipe.id for s in a.steps] == [s.recipe.id for s in b.steps]
 
 
-def test_param_value_is_independent_of_chain_position():
-    # A value depends on (build_seed, recipe, param), not on draw order or the
-    # step's position, so the same recipe keeps its flavour across plans.
-    pool = _pool()
-    p1 = generate(pool, OS, 1, 1, 3)  # sudo step at index 1
-    p2 = generate(pool, OS, 2, 1, 3)  # sudo step at index 2
-    assert any(s.recipe.id == "sudo-misconfig-privesc" for s in p1.steps)
-    assert any(s.recipe.id == "sudo-misconfig-privesc" for s in p2.steps)
+def test_plan_variables_are_numbered_per_step():
+    plan = generate(_pool(), OS, 3, 2, 0)
+    assert [s.instance for s in plan.steps] == [
+        f"{s.recipe.id}#{i}" for i, s in enumerate(plan.steps)
+    ]
 
-    m1 = materialize(p1, 42)
-    m2 = materialize(p2, 42)
-    key = "sudo-misconfig-privesc.binary"
-    assert m1.values[key] == m2.values[key]
+    manifest = materialize(plan, 5)
+    instances = {s.instance for s in plan.steps}
+    for key in manifest.values:
+        if "." in key:
+            prefix = key.split(".", 1)[0]
+            assert "#" in prefix
+            assert prefix in instances

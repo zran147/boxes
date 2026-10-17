@@ -74,23 +74,23 @@ class Manifest:
         return Fact(f.pred, tuple(self.ground_term(a) for a in f.args))
 
     def step_context(self, step: Step) -> dict[str, object]:
-        rid = step.recipe.id
+        prefix = step.instance
         ctx: dict[str, object] = {}
         for name in step.recipe.params:
-            ctx[name] = self.value_of(f"{rid}.{name}")
+            ctx[name] = self.value_of(f"{prefix}.{name}")
         for f in [*step.requires, *step.provides]:
             for a in f.args:
-                if isinstance(a, Var) and a.name.startswith(f"{rid}."):
-                    ctx[a.name[len(rid) + 1 :]] = self.value_of(a.name)
+                if isinstance(a, Var) and a.name.startswith(f"{prefix}."):
+                    ctx[a.name[len(prefix) + 1 :]] = self.value_of(a.name)
         return ctx
 
 
 def _spec_for(plan: Plan, varname: str) -> ParamSpec | None:
     if "." not in varname:
         return None
-    rid, base = varname.split(".", 1)
+    prefix, base = varname.split(".", 1)
     for step in plan.steps:
-        if step.recipe.id == rid:
+        if step.instance == prefix:
             return step.recipe.params.get(base)
     return None
 
@@ -110,12 +110,12 @@ def materialize(plan: Plan, build_seed: int) -> Manifest:
     fixed_by_var: dict[str, object] = {}
 
     for step in plan.steps:
-        rid = step.recipe.id
+        prefix = step.instance
         for f in [*step.requires, *step.provides]:
             for v in _vars(f):
                 uf.add(v)
         for pname in step.recipe.params:
-            uf.add(f"{rid}.{pname}")
+            uf.add(f"{prefix}.{pname}")
 
     for step in plan.steps:
         for k, v in step.subst.items():

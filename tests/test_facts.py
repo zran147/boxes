@@ -40,12 +40,16 @@ def test_subst_fact():
 
 
 def test_validate_arity():
-    validate_fact(Fact("creds", ("ssh", "u", "p")))
-    try:
-        validate_fact(Fact("creds", ("ssh", "u")))
-    except ValueError:
-        return
-    raise AssertionError("expected arity error")
+    validate_fact(Fact("creds", ("u", "p")))
+    validate_fact(Fact("creds", ("u",)))  # partial credential
+    validate_fact(Fact("service_access", ("ftp",)))
+    validate_fact(Fact("service_access", ("ftp", "u", "p")))
+    for bad in (Fact("creds", ("u", "p", "extra")), Fact("service_access", ())):
+        try:
+            validate_fact(bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"expected arity error for {bad}")
 
 
 def test_validate_unknown_predicate():

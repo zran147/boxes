@@ -151,20 +151,32 @@ SIGNATURES: dict[str, tuple[str, ...]] = {
     "os": ("name",),
     "host": ("name",),
     "net.port": ("host", "port"),
-    "service_access": ("service",),
-    "creds": ("service", "user", "password"),
+    "service_access": ("service", "user", "secret"),
+    "creds": ("user", "password"),
     "knows": ("what", "value"),
     "access_shell": ("user",),
     "access_root": (),
+}
+
+# Predicates whose trailing arguments are optional (e.g. service_access(ftp),
+# service_access(ftp, user), service_access(ftp, user, secret)).
+MIN_ARITY: dict[str, int] = {
+    "service_access": 1,
+    "creds": 1,
 }
 
 
 def validate_fact(f: Fact) -> None:
     if f.pred not in SIGNATURES:
         raise ValueError(f"unknown predicate {f.pred!r} in {f}")
-    want = len(SIGNATURES[f.pred])
-    if len(f.args) != want:
+    names = SIGNATURES[f.pred]
+    low = MIN_ARITY.get(f.pred, len(names))
+    if not (low <= len(f.args) <= len(names)):
+        if low == len(names):
+            expect = f"{len(names)} argument(s)"
+        else:
+            expect = f"{low}..{len(names)} argument(s)"
         raise ValueError(
-            f"predicate {f.pred!r} expects {want} argument(s) "
-            f"({', '.join(SIGNATURES[f.pred])}), got {len(f.args)} in {f}"
+            f"predicate {f.pred!r} expects {expect} "
+            f"({', '.join(names)}), got {len(f.args)} in {f}"
         )

@@ -52,7 +52,7 @@ def cmd_gen(args) -> int:
         print("internal error: generated plan does not satisfy itself", file=sys.stderr)
         return 3
 
-    build_seed = args.build_seed if args.build_seed is not None else seed
+    build_seed = args.build_seed if args.build_seed is not None else random.randrange(1, 2**31)
     manifest = materialize(plan, build_seed)
 
     if args.json:
@@ -183,8 +183,9 @@ def cmd_verify(args) -> int:
         if plan is None:
             print("could not generate a machine for those depths", file=sys.stderr)
             return 1
-        build_seed = args.build_seed if args.build_seed is not None else args.seed
+        build_seed = args.build_seed if args.build_seed is not None else random.randrange(1, 2**31)
         manifest = materialize(plan, build_seed)
+        print(f"plan seed={args.seed} build seed={build_seed}")
         print("chain: " + " -> ".join(s.recipe.id for s in plan.steps))
         result = verify_machine(plan, manifest, backend, image_tag(args.os), keep=args.keep)
         _print_verify(result)

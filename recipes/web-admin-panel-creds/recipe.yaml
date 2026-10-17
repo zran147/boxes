@@ -11,7 +11,9 @@ requires:
   - net.port($h, 80)
   - knows(path, $path)
 provides:
-  - creds(ssh, $admin_user, $admin_pass)
+  - creds($admin_user, $admin_pass)
+  - creds($admin_user)
+  - creds($admin_pass)
 params:
   admin_user:
     type: choice

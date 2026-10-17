@@ -71,7 +71,7 @@ def _ground_fact(f: Fact, ctx: dict) -> Fact:
     return Fact(f.pred, tuple(_ground(a, ctx) for a in f.args))
 
 
-def _resolve_provides(provides, subst: dict, rid: str, params: dict):
+def _resolve_provides(provides, subst: dict, instance: str, params: dict):
     """Ground a renamed, substituted provides fact. Returns (fact, ok)."""
 
     def walk(t):
@@ -85,8 +85,8 @@ def _resolve_provides(provides, subst: dict, rid: str, params: dict):
         t = walk(t)
         if isinstance(t, Var):
             name = t.name
-            if name.startswith(f"{rid}."):
-                base = name[len(rid) + 1 :]
+            if name.startswith(f"{instance}."):
+                base = name[len(instance) + 1 :]
                 if base in params:
                     return params[base]
             return None
@@ -137,13 +137,14 @@ def check_recipe(recipe: Recipe, seed: int = 0) -> Result:
     grounded_requires = [_ground_fact(f, ctx) for f in recipe.requires]
     state = initial_state(SAMPLE_OS) + grounded_requires
 
-    apps = list(_applications(recipe, state, rng))
+    instance = f"{recipe.id}#1"
+    apps = list(_applications(recipe, state, rng, instance))
     if not apps:
         result.errors.append("recipe is not applicable in a state that satisfies its requires")
         return result
 
     _, provides, subst, _ = apps[0]
-    grounded_provides, ok = _resolve_provides(provides, subst, recipe.id, params)
+    grounded_provides, ok = _resolve_provides(provides, subst, instance, params)
     if not ok:
         result.errors.append(f"provides contain ungrounded variables: {', '.join(str(p) for p in provides)}")
     for f in grounded_provides:
@@ -165,7 +166,7 @@ def check_recipe(recipe: Recipe, seed: int = 0) -> Result:
     else:
         reduced = [f for f in grounded_requires if f is not non_prelude[0]]
         reduced_state = initial_state(SAMPLE_OS) + reduced
-        if list(_applications(recipe, reduced_state, Random(seed))):
+        if list(_applications(recipe, reduced_state, Random(seed), instance)):
             result.errors.append(
                 f"recipe still applies without its requirement {non_prelude[0]} (guard is ineffective)"
             )

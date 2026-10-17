@@ -8,9 +8,11 @@ fidelity: container
 provision: ./provision.sh
 poc: ./poc.sh
 requires:
-  - creds(ftp, $u, $p)
+  - service_access(ftp, $u, $p)
 provides:
-  - creds(ssh, $ssh_user, $ssh_pass)
+  - creds($ssh_user, $ssh_pass)
+  - creds($ssh_user)
+  - creds($ssh_pass)
 params:
   ssh_user:
     type: choice

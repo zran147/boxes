@@ -10,7 +10,9 @@ poc: ./poc.sh
 requires:
   - net.port($h, 80)
 provides:
-  - creds(ssh, $leak_user, $leak_pass)
+  - creds($leak_user, $leak_pass)
+  - creds($leak_user)
+  - creds($leak_pass)
 params:
   leak_user:
     type: choice
