@@ -6,3 +6,4 @@ dist/
 .pytest_cache/
 .venv/
 .boxes-cache/
+.boxes-vm/
