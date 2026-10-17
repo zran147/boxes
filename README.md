@@ -391,6 +391,9 @@ to the proxy; after the seal, only the host-only attack network remains.
 
 The proxy cache is a persistent Docker volume (`boxes-proxy-cache`). It covers
 apt today; pip/artifact proxying and pinned snapshot dates are the next step.
+After a host or Docker restart, run `boxes proxy up` again: the cache volume
+survives, but the `br-provision` veth has to be reattached. Slow TCG apt installs
+can be given more time with `BOXES_PROVISION_TIMEOUT` (seconds, default 1200).
 
 The sudoers rule must allow the helper subcommands, hence `boxes net *`.
 
