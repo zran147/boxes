@@ -6,7 +6,9 @@ os: ["ubuntu-*", "debian-*"]
 difficulty: 0.2
 fidelity: container
 provision: ./provision.sh
-poc: ./poc.sh
+poc:
+  script: ./poc.sh
+  context: attacker
 requires:
   - service_access(ftp, $u, $p)
 provides:

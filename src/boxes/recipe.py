@@ -45,6 +45,7 @@ class Recipe:
     provision: str | None = None  # script, run as root inside the target
     poc: str | None = None  # script, run as the actor; exit 0 = proven
     actor: str | None = None  # "$var" resolved from context, default "attacker"
+    poc_context: str = "target"  # "target" | "attacker" (run from the attacker box)
     poc_timeout: int = 120
     assets: str | None = None  # directory copied to /opt/boxes/<id>/ in the target
     path: Path | None = None
@@ -137,7 +138,21 @@ def load_recipe(path: Path) -> Recipe:
     if fidelity not in {"container", "vm"}:
         raise ValueError(f"{rid}: fidelity must be 'container' or 'vm', got {fidelity!r}")
     provision = data.get("provision")
-    poc = data.get("poc")
+    poc_data = data.get("poc")
+    poc: str | None = None
+    poc_context = "target"
+    if isinstance(poc_data, str):
+        poc = poc_data
+    elif isinstance(poc_data, dict):
+        poc = poc_data.get("script")
+        poc_context = str(poc_data.get("context", "target"))
+        if not poc:
+            raise ValueError(f"{rid}: poc needs a 'script' entry")
+    elif poc_data is not None:
+        raise ValueError(f"{rid}: poc must be a path or a mapping with script/context")
+    if poc_context not in {"target", "attacker"}:
+        raise ValueError(f"{rid}: poc.context must be 'target' or 'attacker', got {poc_context!r}")
+
     for phase, rel in (("provision", provision), ("poc", poc)):
         if rel is not None and not (base_dir / str(rel)).is_file():
             raise ValueError(f"{rid}: {phase} script not found: {base_dir / str(rel)}")
@@ -169,6 +184,7 @@ def load_recipe(path: Path) -> Recipe:
         provision=str(provision) if provision else None,
         poc=str(poc) if poc else None,
         actor=str(data["actor"]) if data.get("actor") is not None else None,
+        poc_context=poc_context,
         poc_timeout=poc_timeout,
         assets=str(assets) if assets else None,
         path=path,

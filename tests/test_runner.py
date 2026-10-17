@@ -188,3 +188,45 @@ def test_reserved_env_keys_win_over_params():
     env = build_env(rec, {"recipe": "nope", "os": "nope"}, "ubuntu-22.04")
     assert env["BOX_RECIPE"] == "r"
     assert env["BOX_OS"] == "ubuntu-22.04"
+
+
+def test_attacker_context_runs_the_poc_in_the_attacker_container(tmp_path):
+    rec = make_recipe(tmp_path, "net-poc", actor="$u")
+    rec.poc_context = "attacker"
+    backend = FakeBackend()
+
+    result = verify_recipe(rec, fixture(u="deploy"), backend, "img:test")
+
+    assert result.ok
+    creates = [c for c in backend.calls if c[0] == "create"]
+    assert len(creates) == 2  # target + attacker
+    kinds = [c[0] for c in backend.calls]
+    assert kinds.count("network_create") == 1
+    assert kinds.count("network_destroy") == 1
+
+    execs = [c for c in backend.calls if c[0] == "exec" and c[4]]
+    assert execs[0][3] is None  # provision as root in the target
+    assert execs[1][3] == "attacker"
+    assert execs[1][4]["BOX_HOST"] == "target"
+
+
+def test_machine_shares_one_attacker_container_across_the_chain(tmp_path):
+    r1 = make_recipe(tmp_path, "net-one")
+    r1.poc_context = "attacker"
+    r2 = make_recipe(tmp_path, "net-two", actor="$u")
+    r2.poc_context = "attacker"
+
+    plan = _Plan("ubuntu-22.04", [_Step(r1), _Step(r2)], seed=1)
+    manifest = _Manifest({"net-one": {}, "net-two": {"u": "www-data"}})
+    backend = FakeBackend()
+
+    result = verify_machine(plan, manifest, backend, "img:test")
+
+    assert result.ok
+    creates = [c for c in backend.calls if c[0] == "create"]
+    assert len(creates) == 2  # exactly one target + one shared attacker
+    attacker = [c[1] for c in creates if c[4] is None][0]
+    poc_execs = [c for c in backend.calls if c[0] == "exec" and "proving" in c[2]]
+    assert len(poc_execs) == 2
+    assert all(c[1] == attacker for c in poc_execs)
+    assert all(c[4]["BOX_HOST"] == "target" for c in poc_execs)

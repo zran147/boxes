@@ -42,8 +42,22 @@ class FakeBackend:
         self.images.add(tag)
         return ExecResult(0, "", "")
 
-    def create(self, name: str, image: str, network: str = "none") -> ExecResult:
-        self.calls.append(("create", name, image, network))
+    def network_create(self, name: str) -> ExecResult:
+        self.calls.append(("network_create", name))
+        return ExecResult(0, "", "")
+
+    def network_destroy(self, name: str) -> ExecResult:
+        self.calls.append(("network_destroy", name))
+        return ExecResult(0, "", "")
+
+    def create(
+        self,
+        name: str,
+        image: str,
+        network: str = "none",
+        alias: str | None = None,
+    ) -> ExecResult:
+        self.calls.append(("create", name, image, network, alias))
         self.created.append(name)
         return ExecResult(0, "", "")
 

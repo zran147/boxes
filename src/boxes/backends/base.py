@@ -33,7 +33,17 @@ class Backend(Protocol):
 
     def build_image(self, tag: str, context: str) -> ExecResult: ...
 
-    def create(self, name: str, image: str, network: str = "none") -> ExecResult: ...
+    def network_create(self, name: str) -> ExecResult: ...
+
+    def network_destroy(self, name: str) -> ExecResult: ...
+
+    def create(
+        self,
+        name: str,
+        image: str,
+        network: str = "none",
+        alias: str | None = None,
+    ) -> ExecResult: ...
 
     def exec(
         self,

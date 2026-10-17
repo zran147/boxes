@@ -172,8 +172,9 @@ VMs need KVM (and this host has no nested virt), so the fast path runs recipes o
 - QEMU will implement the same interface later for kernel/boot-level recipes
   (`fidelity: vm`).
 
-A base image is built once with network access; every machine container is then
-created with `--network none`, so recipes never get egress at verify time.
+A base image and an attacker image are built once with network access; every
+machine runs on its own `--internal` Docker network, so the target and attacker
+can reach each other but have no route to the host or the internet.
 
 ```bash
 # one-time (or after changing the Dockerfile)
@@ -190,8 +191,10 @@ PYTHONPATH=src python3 -m boxes verify --machine --to-user 3 --to-root 2 --seed 
 ```
 
 All shipped recipes are verifiable, including the FTP → leaked creds → SSH
-foothold chain and the web discovery → admin creds → SSH chain. The base image
-carries `vsftpd`, `openssh-server`, `openssh-client` and `sshpass` for them.
+foothold chain and the web discovery → admin creds → SSH chain. The target image
+carries `vsftpd`, `openssh-server`, `openssh-client` and `sshpass`; the attacker
+image (`boxes/attacker:latest`) carries `nmap`, `curl`, `sshpass`, `python3`,
+`netcat`, `socat` and friends, and will grow as recipes need more tooling.
 
 ### Verification cache and parallelism
 
@@ -221,21 +224,31 @@ practical to inline in a shell script.
 
 ### Recipe verification contract
 
-A verifiable recipe declares a provision script and a PoC script:
+A verifiable recipe declares a provision script and a PoC:
 
 ```yaml
 fidelity: container          # container | vm
-provision: ./provision.sh    # runs as root; makes `requires` real
-poc: ./poc.sh                # runs as the actor; exit 0 = proven
-actor: $u                    # principal to run the PoC as (default: attacker)
+provision: ./provision.sh    # runs as root in the target; makes `requires` real
+poc:
+  script: ./poc.sh           # exit 0 = proven
+  context: attacker          # attacker | target
+actor: $u                    # target-context principal (default: attacker)
 poc_timeout: 120
 ```
 
+`context: attacker` runs the PoC in the **attacker container**, on the machine's
+private network, with `BOX_HOST=target` — so it uses real network paths and
+cannot cheat by running inside the victim. `context: target` runs in the target
+as `actor` with `BOX_HOST=127.0.0.1`, which is right for local privesc steps.
+One attacker container is created per machine and shared by every
+attacker-context step in the chain; services bind `0.0.0.0`.
+
 Both scripts receive the grounded context as environment variables
-(`BOX_U`, `BOX_BINARY`, `BOX_RECIPE`, `BOX_OS`, ...). The actor is resolved from
-that context, so the PoC runs as the principal the step claims to act as — e.g.
-the root step in a chain runs as the user the earlier foothold produced. That
-is how the chain proves *composability*, not just isolated steps.
+(`BOX_U`, `BOX_BINARY`, `BOX_HOST`, `BOX_RECIPE`, `BOX_OS`, `BOX_ASSETS`, ...).
+The actor is resolved from that context, so a target-context PoC runs as the
+principal the step claims to act as — e.g. the root step in a chain runs as the
+user the earlier foothold produced. That is how the chain proves
+*composability*, not just isolated steps.
 
 Scripts are arbitrary code. Today they run as root **inside** a
 `--network none` container with memory/CPU/PID limits, which is acceptable for
@@ -251,9 +264,9 @@ the backend — a `fidelity: vm` recipe is never tested in a container.
 | Stage | Scope | Status |
 |-------|-------|--------|
 | **P0** — symbolic generation | Facts + unification, typed predicates, recipes, bounded-length planner, `open_port` prelude, causal-chain constraint, two-seed manifest, lint, `boxes new` scaffold, per-recipe harness | **Done** |
-| **P1** — container fast path | Pluggable backend (Docker + fake), base image, `provision`/`poc` contract, recipe assets, L2 minimal repro, L3 full-chain verification, content-addressed verification cache, parallel `--jobs`, real FTP/SSH/web/SUID/sudo recipes | **Done** |
+| **P1** — container fast path | Pluggable backend (Docker + fake), target + attacker images, per-machine internal network, shared attacker container, `provision`/`poc` contract (`context: target|attacker`), recipe assets, L2 minimal repro, L3 full-chain verification, content-addressed verification cache, parallel `--jobs`, real FTP/SSH/web/SUID/sudo recipes | **Done** |
 | **P2** — fidelity + branching | QEMU backend for `fidelity: vm` (kernel/boot-level recipes), snapshots, multiple paths per flag (DAG instead of a chain), separate-place credentials (`creds.uname` + `creds.pass` consumed independently) | **Next** |
-| **P3** — coherence + scale | Difficulty budgets, themes, typed choices (value sets constrained by what provision/PoC support), more distros, PoCs run from a separate attacker container over a private network instead of loopback | Planned |
+| **P3** — coherence + scale | Difficulty budgets, themes, typed choices (value sets constrained by what provision/PoC support), more distros, a more complete attacker toolkit | Planned |
 | **P4** — registry | Recipe registry API + client, signed recipes, sandboxed recipe execution, per-recipe CI | Planned |
 
 P1 delivered L3/manifest/flags earlier than originally planned, and swapped the

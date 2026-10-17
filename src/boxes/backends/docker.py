@@ -54,29 +54,45 @@ class DockerBackend:
     def build_image(self, tag: str, context: str) -> ExecResult:
         return self._run(["build", "-t", tag, context], timeout=900)
 
-    def create(self, name: str, image: str, network: str = "none") -> ExecResult:
-        return self._run(
-            [
-                "run",
-                "-d",
-                "--name",
-                name,
-                "--hostname",
-                "target",
-                "--network",
-                network,
-                "--memory",
-                "1g",
-                "--cpus",
-                "1",
-                "--pids-limit",
-                "256",
-                image,
-                "sleep",
-                "infinity",
-            ],
-            timeout=180,
-        )
+    def network_create(self, name: str) -> ExecResult:
+        # --internal: containers can reach each other, but have no route to the
+        # host or the internet.
+        return self._run(["network", "create", "--internal", name], timeout=60)
+
+    def network_destroy(self, name: str) -> ExecResult:
+        return self._run(["network", "rm", name], timeout=60)
+
+    def create(
+        self,
+        name: str,
+        image: str,
+        network: str = "none",
+        alias: str | None = None,
+    ) -> ExecResult:
+        args = [
+            "run",
+            "-d",
+            "--name",
+            name,
+            "--hostname",
+            alias or name,
+            "--network",
+            network,
+        ]
+        if alias:
+            args += ["--network-alias", alias]
+        args += [
+            "--memory",
+            "1g",
+            "--cpus",
+            "1",
+            "--pids-limit",
+            "256",
+            image,
+            "sleep",
+            "infinity",
+        ]
+        return self._run(args, timeout=180)
 
     def exec(
         self,

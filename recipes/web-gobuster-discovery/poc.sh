@@ -4,7 +4,7 @@
 set -eu
 found=""
 for w in admin backup dev secret api; do
-    code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1/$w/")
+    code=$(curl -s -o /dev/null -w '%{http_code}' "http://${BOX_HOST}/$w/")
     if [ "$code" = "200" ]; then
         found="$w"
         break

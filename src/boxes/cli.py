@@ -14,7 +14,7 @@ import yaml
 from .backends import get_backend
 from .cache import Cache, machine_key
 from .harness import check_recipe
-from .images import PROJECT_ROOT, ensure_image, image_tag
+from .images import PROJECT_ROOT, attacker_image, ensure_attacker_image, ensure_image, image_tag
 from .lint import lint
 from .manifest import materialize
 from .planner import generate, satisfies
@@ -154,6 +154,8 @@ def _print_verify(result) -> None:
                 print(f"      {line}")
     if result.container and result.kept:
         print(f"  container kept: {result.container}")
+    if result.attacker and result.kept:
+        print(f"  attacker kept: {result.attacker}")
 
 
 def _make_cache(args) -> Cache:
@@ -169,11 +171,16 @@ def _prepare_backend(args):
     if not backend.available():
         print(f"backend {args.backend!r} is not available", file=sys.stderr)
         return None
-    res = ensure_image(backend, args.os, getattr(args, "rebuild", False))
-    if not res.ok:
-        print(f"base image {image_tag(args.os)} is not ready:", file=sys.stderr)
-        print(res.output(), file=sys.stderr)
-        return None
+    rebuild = getattr(args, "rebuild", False)
+    for tag, ensure in (
+        (image_tag(args.os), lambda: ensure_image(backend, args.os, rebuild)),
+        (attacker_image(), lambda: ensure_attacker_image(backend, rebuild)),
+    ):
+        res = ensure()
+        if not res.ok:
+            print(f"image {tag} is not ready:", file=sys.stderr)
+            print(res.output(), file=sys.stderr)
+            return None
     return backend
 
 
@@ -181,7 +188,7 @@ def cmd_image(args) -> int:
     backend = _prepare_backend(args)
     if backend is None:
         return 2
-    print(f"base image ready: {image_tag(args.os)}")
+    print(f"images ready: {image_tag(args.os)}, {attacker_image()}")
     return 0
 
 
@@ -190,7 +197,7 @@ def cmd_verify(args) -> int:
     if backend is None:
         return 2
     image = image_tag(args.os)
-    image_id = backend.image_id(image)
+    image_id = f"{backend.image_id(image)}|{backend.image_id(attacker_image())}"
     cache = _make_cache(args)
 
     if args.machine:

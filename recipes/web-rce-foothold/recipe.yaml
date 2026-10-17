@@ -6,7 +6,9 @@ os: ["ubuntu-*", "debian-*"]
 difficulty: 0.5
 fidelity: container
 provision: ./provision.sh
-poc: ./poc.sh
+poc:
+  script: ./poc.sh
+  context: attacker
 assets: ./files
 yields: ["user"]
 requires:

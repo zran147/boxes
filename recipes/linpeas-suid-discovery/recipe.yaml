@@ -6,7 +6,9 @@ os: ["ubuntu-*", "debian-*"]
 difficulty: 0.3
 fidelity: container
 provision: ./provision.sh
-poc: ./poc.sh
+poc:
+  script: ./poc.sh
+  context: target
 actor: $u
 requires:
   - access_shell($u)
