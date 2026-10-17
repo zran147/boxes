@@ -138,6 +138,9 @@ def load_recipe(path: Path) -> Recipe:
             raise ValueError(f"{rid}: {phase} script not found: {base_dir / str(rel)}")
     if (provision is None) != (poc is None):
         raise ValueError(f"{rid}: provision and poc must be provided together")
+    poc_timeout = int(data.get("poc_timeout", 120))
+    if poc_timeout <= 0:
+        raise ValueError(f"{rid}: poc_timeout must be positive, got {poc_timeout}")
 
     return Recipe(
         id=rid,

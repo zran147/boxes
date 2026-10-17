@@ -63,9 +63,10 @@ def _env_key(name: str) -> str:
 
 
 def build_env(recipe: Recipe, ctx: dict, os_name: str) -> dict[str, str]:
-    env = {"BOX_RECIPE": recipe.id, "BOX_OS": os_name}
-    for key, value in ctx.items():
-        env[_env_key(key)] = str(value)
+    env = {_env_key(key): str(value) for key, value in ctx.items()}
+    # reserved keys always win over a recipe param with the same name
+    env["BOX_RECIPE"] = recipe.id
+    env["BOX_OS"] = os_name
     return env
 
 
@@ -79,6 +80,17 @@ def resolve_actor(recipe: Recipe, ctx: dict) -> str:
     return actor
 
 
+def _actor_or_error(recipe: Recipe, ctx: dict) -> tuple[str | None, str | None]:
+    try:
+        return resolve_actor(recipe, ctx), None
+    except ValueError as e:
+        return None, str(e)
+
+
+def _backend_fidelity(backend: Backend) -> str:
+    return getattr(backend, "fidelity", "container")
+
+
 def _run_script(
     backend: Backend,
     container: str,
@@ -89,7 +101,10 @@ def _run_script(
     user: str | None,
     timeout: int,
 ) -> ExecResult:
-    script = recipe.script(phase).read_text()
+    try:
+        script = recipe.script(phase).read_text()
+    except (OSError, ValueError) as e:
+        return ExecResult(2, "", str(e))
     return backend.exec(
         container,
         script,
@@ -129,6 +144,13 @@ def verify_recipe(
         result.ok = False
         result.error = "recipe has no provision/poc scripts (symbolic-only)"
         return result
+    if recipe.fidelity != _backend_fidelity(backend):
+        result.ok = False
+        result.error = (
+            f"recipe needs a {recipe.fidelity} backend, "
+            f"but {backend.name} is {_backend_fidelity(backend)}"
+        )
+        return result
 
     container = _container_name("recipe", recipe.id)
     result.container = container
@@ -147,11 +169,14 @@ def verify_recipe(
         )
         result.add(_to_step(recipe, "provision", prov))
         if prov.ok:
-            actor = resolve_actor(recipe, ctx)
-            poc = _run_script(
-                backend, container, recipe, "poc", ctx, fixture.os, actor, recipe.poc_timeout
-            )
-            result.add(_to_step(recipe, "poc", poc, actor=actor))
+            actor, actor_err = _actor_or_error(recipe, ctx)
+            if actor_err:
+                result.add(StepResult(recipe.id, "poc", False, exit_code=2, output=actor_err))
+            else:
+                poc = _run_script(
+                    backend, container, recipe, "poc", ctx, fixture.os, actor, recipe.poc_timeout
+                )
+                result.add(_to_step(recipe, "poc", poc, actor=actor))
     finally:
         if not keep:
             backend.destroy(container)
@@ -172,6 +197,19 @@ def verify_machine(
     if missing:
         result.ok = False
         result.error = f"recipes without provision/poc: {', '.join(missing)}"
+        return result
+
+    incompatible = [
+        f"{s.recipe.id} ({s.recipe.fidelity})"
+        for s in plan.steps
+        if s.recipe.fidelity != _backend_fidelity(backend)
+    ]
+    if incompatible:
+        result.ok = False
+        result.error = (
+            f"backend {backend.name} is {_backend_fidelity(backend)}; "
+            f"incompatible recipes: {', '.join(incompatible)}"
+        )
         return result
 
     container = _container_name("machine", f"seed-{plan.seed}")
@@ -195,7 +233,12 @@ def verify_machine(
             result.add(_to_step(step.recipe, "provision", res))
 
         for step, ctx in zip(plan.steps, contexts):
-            actor = resolve_actor(step.recipe, ctx)
+            actor, actor_err = _actor_or_error(step.recipe, ctx)
+            if actor_err:
+                result.add(
+                    StepResult(step.recipe.id, "poc", False, exit_code=2, output=actor_err)
+                )
+                continue
             res = _run_script(
                 backend, container, step.recipe, "poc", ctx, plan.os_name, actor, step.recipe.poc_timeout
             )

@@ -39,4 +39,17 @@ def lint(recipes: list[Recipe]) -> list[str]:
                         f"{r.id}: provides fact uses ${v}, which is neither a param "
                         f"nor bound by a requires fact"
                     )
+
+        for f in r.requires:
+            if f.pred == "open_port" and not isinstance(f.args[1], int):
+                errs.append(
+                    f"{r.id}: open_port needs a concrete integer port, got {f}"
+                )
+
+        if r.actor and r.actor.startswith("$"):
+            var = r.actor[1:]
+            if var not in bound:
+                errs.append(
+                    f"{r.id}: actor {r.actor} is not bound by requires or params"
+                )
     return errs

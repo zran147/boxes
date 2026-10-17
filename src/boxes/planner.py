@@ -20,7 +20,7 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass, field
 
-from .facts import Fact, Var, rename_fact, subst_fact, unify_fact
+from .facts import Fact, rename_fact, subst_fact, unify_fact
 from .recipe import Recipe
 
 TARGET = "target"
@@ -211,32 +211,17 @@ def is_relevant(plan: Plan) -> bool:
 
 
 def satisfies(plan: Plan) -> bool:
-    """Re-simulate the plan and check every precondition was met in order."""
+    """Re-simulate the plan and check every precondition was met in order.
+
+    Uses the same backtracking unification as the planner. A greedy per-fact
+    match is not enough: with several credential sets in state, the first fact
+    that matches one requirement can make a later requirement unsatisfiable
+    even though a consistent binding exists.
+    """
     state = initial_state(plan.os_name)
     for step in plan.steps:
-        reqs = [rename_fact(f, step.instance) for f in step.recipe.requires]
-        subst: dict = {}
-        for req in reqs:
-            matched = None
-            for f in state:
-                ns = unify_fact(req, f, subst)
-                if ns is not None:
-                    matched = f
-                    subst = ns
-                    break
-            if matched is None:
-                # ports are assumed free
-                if req.pred == "open_port" and len(req.args) == 2:
-                    assumed = Fact("open_port", (TARGET, req.args[1]))
-                    ns = unify_fact(req, assumed, subst)
-                    if ns is None:
-                        return False
-                    subst = ns
-                    state = state + [assumed]
-                    continue
-                return False
-        for f in [rename_fact(x, step.instance) for x in step.recipe.provides]:
-            g = subst_fact(f, subst)
-            if g not in state:
-                state = state + [g]
+        apps = list(_applications(step.recipe, state, random.Random(0), step.instance))
+        if not apps:
+            return False
+        state = apps[0][3]
     return True

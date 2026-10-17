@@ -15,6 +15,7 @@ Responder = Callable[[str, str, str | None, Mapping[str, str]], ExecResult]
 
 class FakeBackend:
     name = "fake"
+    fidelity = "container"
 
     def __init__(
         self,

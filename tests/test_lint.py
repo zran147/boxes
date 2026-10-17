@@ -77,3 +77,15 @@ def test_cannot_yield_both_flags():
     r = _mk(kind="privesc", yields=["user", "root"], requires=[parse_fact("access_shell($u)")])
     errs = lint([r])
     assert any("both the user and root" in e for e in errs)
+
+
+def test_actor_must_be_bound():
+    r = _mk(actor="$nope")
+    errs = lint([r])
+    assert any("actor $nope" in e for e in errs)
+
+
+def test_open_port_must_be_concrete():
+    r = _mk(requires=[parse_fact("open_port($h, $p)")])
+    errs = lint([r])
+    assert any("concrete integer port" in e for e in errs)

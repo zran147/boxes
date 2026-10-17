@@ -8,7 +8,7 @@ from boxes.recipe import Recipe
 from boxes.runner import build_env, resolve_actor, verify_machine, verify_recipe
 
 
-def make_recipe(tmp_path, rid, *, actor=None, provision=True, poc=True, requires=None):
+def make_recipe(tmp_path, rid, *, actor=None, provision=True, poc=True, requires=None, fidelity="container"):
     d = tmp_path / rid
     d.mkdir()
     prov = None
@@ -33,6 +33,7 @@ def make_recipe(tmp_path, rid, *, actor=None, provision=True, poc=True, requires
         provision=prov,
         poc=p,
         actor=actor,
+        fidelity=fidelity,
         path=d / "recipe.yaml",
     )
 
@@ -160,3 +161,30 @@ def test_verify_machine_refuses_when_a_step_is_symbolic(tmp_path):
     assert not result.ok
     assert "without provision/poc" in result.error
     assert backend.calls == []
+
+
+def test_vm_recipe_is_rejected_by_a_container_backend(tmp_path):
+    rec = make_recipe(tmp_path, "kernel-thing", fidelity="vm")
+    backend = FakeBackend()
+    result = verify_recipe(rec, fixture(u="x"), backend, "img:test")
+    assert not result.ok
+    assert "vm backend" in result.error
+    assert backend.calls == []
+
+
+def test_missing_actor_is_reported_not_raised(tmp_path):
+    rec = make_recipe(tmp_path, "bad-actor", actor="$nope")
+    result = verify_recipe(rec, fixture(u="x"), FakeBackend(), "img:test")
+    assert not result.ok
+    assert any("not bound" in s.output for s in result.steps)
+
+
+def test_reserved_env_keys_win_over_params():
+    rec = Recipe(
+        id="r", version="1.0.0", kind="discovery", os=["ubuntu-*"], difficulty=0.1,
+        requires=[parse_fact("open_port($h, 80)")], provides=[parse_fact("knows(a, $v)")],
+        yields=[], params={}, walkthrough="",
+    )
+    env = build_env(rec, {"recipe": "nope", "os": "nope"}, "ubuntu-22.04")
+    assert env["BOX_RECIPE"] == "r"
+    assert env["BOX_OS"] == "ubuntu-22.04"

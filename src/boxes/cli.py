@@ -183,6 +183,9 @@ def cmd_verify(args) -> int:
         if plan is None:
             print("could not generate a machine for those depths", file=sys.stderr)
             return 1
+        if not satisfies(plan):
+            print("internal error: generated plan does not satisfy itself", file=sys.stderr)
+            return 3
         build_seed = args.build_seed if args.build_seed is not None else random.randrange(1, 2**31)
         manifest = materialize(plan, build_seed)
         print(f"plan seed={args.seed} build seed={build_seed}")
@@ -268,7 +271,7 @@ def build_parser() -> argparse.ArgumentParser:
     ib = img_sub.add_parser("build", help="build the base image")
     ib.add_argument("--os", default="ubuntu-22.04")
     ib.add_argument("--rebuild", action="store_true")
-    ib.add_argument("--backend", default="docker")
+    ib.add_argument("--backend", default="docker", choices=["docker"])
     ib.set_defaults(func=cmd_image)
 
     v = sub.add_parser("verify", help="build and verify recipes or a machine")
@@ -281,7 +284,7 @@ def build_parser() -> argparse.ArgumentParser:
     v.add_argument("--to-user", type=int, default=1, dest="to_user")
     v.add_argument("--to-root", type=int, default=1, dest="to_root")
     v.add_argument("--os", default="ubuntu-22.04")
-    v.add_argument("--backend", default="docker")
+    v.add_argument("--backend", default="docker", choices=["docker"])
     v.add_argument("--keep", action="store_true", help="keep the container for debugging")
     v.set_defaults(func=cmd_verify)
 

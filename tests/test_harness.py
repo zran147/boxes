@@ -58,7 +58,26 @@ def test_os_mismatch_is_caught():
     )
     res = check_recipe(r)
     assert not res.ok
-    assert any("does not include sample OS" in e for e in res.errors)
+    assert any("matches none of the sample OSes" in e for e in res.errors)
+
+
+def test_harness_picks_a_matching_sample_os():
+    # A debian-only recipe should be tested against debian, not hard-fail on ubuntu.
+    r = Recipe(
+        id="debian-only",
+        version="1.0.0",
+        kind="discovery",
+        os=["debian-*"],
+        difficulty=0.1,
+        requires=[parse_fact("open_port($h, 80)")],
+        provides=[parse_fact("knows(path, $v)")],
+        yields=[],
+        params={"v": ParamSpec("v", "choice", ["/x"])},
+        walkthrough="ok",
+    )
+    res = check_recipe(r)
+    assert res.ok, res.errors
+    assert res.fixture.os == "debian-12"
 
 
 def test_ineffective_guard_is_caught():

@@ -22,6 +22,7 @@ from .planner import PRELUDE, TARGET, _applications, initial_state
 from .recipe import Recipe
 
 SAMPLE_OS = "ubuntu-22.04"
+SAMPLE_OSES = ["ubuntu-22.04", "debian-12", "rocky-9"]
 _PLACEHOLDER = re.compile(r"\{([A-Za-z0-9_.]+)\}")
 _ID = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
@@ -116,8 +117,11 @@ def check_recipe(recipe: Recipe, seed: int = 0) -> Result:
         result.errors.append("difficulty must be within [0, 1]")
     if not recipe.provides:
         result.errors.append("recipe must declare at least one provides fact")
-    if not recipe.applies_to(SAMPLE_OS):
-        result.errors.append(f"recipe os {recipe.os} does not include sample OS {SAMPLE_OS}")
+    os_name = next((o for o in SAMPLE_OSES if recipe.applies_to(o)), None)
+    if os_name is None:
+        result.errors.append(
+            f"recipe os {recipe.os} matches none of the sample OSes {SAMPLE_OSES}"
+        )
         return result
 
     result.errors.extend(lint([recipe]))
@@ -135,7 +139,7 @@ def check_recipe(recipe: Recipe, seed: int = 0) -> Result:
                 ctx.setdefault(base, TARGET if base == "h" else f"fixture_{base}")
 
     grounded_requires = [_ground_fact(f, ctx) for f in recipe.requires]
-    state = initial_state(SAMPLE_OS) + grounded_requires
+    state = initial_state(os_name) + grounded_requires
 
     instance = f"{recipe.id}#1"
     apps = list(_applications(recipe, state, rng, instance))
@@ -165,7 +169,7 @@ def check_recipe(recipe: Recipe, seed: int = 0) -> Result:
         )
     else:
         reduced = [f for f in grounded_requires if f is not non_prelude[0]]
-        reduced_state = initial_state(SAMPLE_OS) + reduced
+        reduced_state = initial_state(os_name) + reduced
         if list(_applications(recipe, reduced_state, Random(seed), instance)):
             result.errors.append(
                 f"recipe still applies without its requirement {non_prelude[0]} (guard is ineffective)"
@@ -173,7 +177,7 @@ def check_recipe(recipe: Recipe, seed: int = 0) -> Result:
 
     result.fixture = Fixture(
         recipe_id=recipe.id,
-        os=SAMPLE_OS,
+        os=os_name,
         params=params,
         requires=[str(f) for f in grounded_requires],
         provides=[str(f) for f in grounded_provides],

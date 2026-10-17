@@ -215,7 +215,8 @@ trusted first-party recipes; a public registry must sandbox harder.
 
 `boxes verify --machine` requires every recipe in the chain to have
 provision+poc; otherwise it reports which ones are symbolic-only rather than
-silently skipping them.
+silently skipping them. It also refuses recipes whose `fidelity` doesn't match
+the backend — a `fidelity: vm` recipe is never tested in a container.
 
 ## Roadmap
 

@@ -15,6 +15,7 @@ from .base import ExecResult
 
 class DockerBackend:
     name = "docker"
+    fidelity = "container"
 
     def __init__(self, binary: str = "docker") -> None:
         self.binary = binary
@@ -34,6 +35,8 @@ class DockerBackend:
             return ExecResult(127, "", f"{self.binary}: not found")
         except subprocess.TimeoutExpired:
             return ExecResult(124, "", f"timed out after {timeout}s")
+        except OSError as e:
+            return ExecResult(126, "", f"{self.binary}: {e}")
         return ExecResult(proc.returncode, proc.stdout, proc.stderr)
 
     # -- Backend protocol --------------------------------------------------

@@ -81,6 +81,39 @@ def test_leaked_credentials_are_the_ones_used(pool):
     assert leak_ctx["ssh_pass"] == foot_ctx["p"]
 
 
+def test_satisfies_backtracks_over_credential_choices():
+    """satisfies() must not be fooled by the first fact that happens to match."""
+    from boxes.facts import parse_fact
+    from boxes.planner import Plan, Step, _applications, initial_state
+    from boxes.recipe import Recipe
+
+    def mk(rid, kind, requires, provides, yields=()):
+        return Recipe(
+            id=rid, version="1.0.0", kind=kind, os=["ubuntu-*"], difficulty=0.1,
+            requires=[parse_fact(x) for x in requires],
+            provides=[parse_fact(x) for x in provides],
+            yields=list(yields), params={}, walkthrough="",
+        )
+
+    producer = mk(
+        "a", "creds", ["open_port($h, 80)"],
+        ["creds(alice, pw1)", "creds(bob, pw2)", "creds.uname(bob)"],
+    )
+    consumer = mk(
+        "b", "privesc", ["creds($u, $p)", "creds.uname($u)"],
+        ["access_root()"], ["root"],
+    )
+
+    state = initial_state("ubuntu-22.04")
+    a = list(_applications(producer, state, random.Random(0), "a#0"))[0]
+    step_a = Step(producer, "a#0", a[2], a[0], a[1], a[3])
+    b = list(_applications(consumer, step_a.state, random.Random(0), "b#1"))[0]
+    step_b = Step(consumer, "b#1", b[2], b[0], b[1], b[3])
+
+    # Alice matches the pair first but has no username fact; only Bob is consistent.
+    assert satisfies(Plan("ubuntu-22.04", [step_a, step_b], 0))
+
+
 def test_single_step_rce_is_reachable_at_depth_one(pool):
     plan = generate(pool, OS, 1, 1, 3)
     assert plan is not None
