@@ -89,8 +89,9 @@ Multi-path (`--multi-path N`) generates and verifies N independent full paths.
 
 ## Usage
 
-Examples below assume `pip install -e .` (so `boxes` is on `PATH`). Without
-installing, prefix each with `PYTHONPATH=src python3 -m`.
+Examples below assume `boxes` is installed and on `PATH`. Without installing,
+prefix each with `PYTHONPATH=src python3 -m`. For the privileged VM helper,
+install system-wide or in a venv (see "VM attacker PoCs" below).
 
 ```bash
 boxes lint
@@ -275,40 +276,15 @@ primitive for per-path verification on one boot.
 ### VM attacker PoCs (tap + bridge + veth)
 
 A VM and the Docker attacker container must share an L2 segment. `boxes net
-up/down` is the only part that needs root:
+up/down` is the only part that needs root. Install `boxes` so root can import
+it; pick either option:
+
+**System-wide (simplest):**
 
 ```bash
-pip install -e .          # absolute console script sudo can call
-sudo visudo -f /etc/sudoers.d/boxes
-```
-
-```
-user ALL=(root) NOPASSWD: /absolute/path/to/boxes net up *, /absolute/path/to/boxes net down *
-```
-
-### Installing `boxes` so sudo can import it
-
-`sudo` resets `HOME` to `/root`, so an editable install in the user site
-(`~/.local/lib/...`) is invisible to root. The helper then fails with
-`ModuleNotFoundError: No module named 'boxes'`. Install the console script
-somewhere root can import it, and point the sudoers rule at that exact path.
-
-**System-wide editable install (simplest):**
-
-```bash
-# remove the user-site install first
-python3 -m pip uninstall -y boxes
-USER_SITE=$(python3 -c 'import site; print(site.getusersitepackages())')
-rm -f "$USER_SITE"/__editable__.boxes-* "$USER_SITE"/boxes-*.pth
-rm -rf "$USER_SITE"/boxes-*.dist-info
-rm -f ~/.local/bin/boxes
-
 sudo pip install --break-system-packages -e /path/to/boxes
 command -v boxes                     # usually /usr/local/bin/boxes
 ```
-
-Use the path printed by `command -v boxes` in the sudoers rule. If you change
-install method, update the rule to match.
 
 **Venv (isolated, no system Python changes):**
 
@@ -317,38 +293,27 @@ python3 -m venv /opt/boxes-venv
 /opt/boxes-venv/bin/pip install -e /path/to/boxes
 ```
 
+`sudo` resets `HOME` to `/root`, so a user-site install (`~/.local/...`) is
+invisible to root; that is why the helper needs a system-wide install or the
+venv binary.
+
+Allow the helper in sudoers, using the path from `command -v boxes` (or the venv
+binary):
+
 ```
-user ALL=(root) NOPASSWD: /opt/boxes-venv/bin/boxes net up *, /opt/boxes-venv/bin/boxes net down *
+user ALL=(root) NOPASSWD: /usr/local/bin/boxes net up *, /usr/local/bin/boxes net down *
 ```
+
+For the venv, put `/opt/boxes-venv/bin/boxes` in the rule and run with
+`BOXES_BIN=/opt/boxes-venv/bin/boxes`.
+
+Check the privilege path on its own:
 
 ```bash
-BOXES_BIN=/opt/boxes-venv/bin/boxes boxes verify --recipe vm-ssh-foothold --backend qemu
+sudo -n /usr/local/bin/boxes net down testrule   # {"machine": "testrule", "removed": true}
 ```
 
-**Wrapper (no install at all):**
-
-```bash
-sudo tee /usr/local/bin/boxes-root >/dev/null <<'EOF'
-#!/bin/sh
-export PYTHONPATH=/path/to/boxes/src
-exec /usr/bin/python3 -m boxes "$@"
-EOF
-sudo chmod 0755 /usr/local/bin/boxes-root
-```
-
-```
-user ALL=(root) NOPASSWD: /usr/local/bin/boxes-root net up *, /usr/local/bin/boxes-root net down *
-```
-
-```bash
-BOXES_BIN=/usr/local/bin/boxes-root boxes verify --recipe vm-ssh-foothold --backend qemu
-```
-
-Check the privilege path on its own before running a VM:
-
-```bash
-sudo -n /absolute/path/to/boxes net down testrule   # {"machine": "testrule", "removed": true}
-```
+Then:
 
 ```bash
 boxes verify --recipe vm-ssh-foothold --backend qemu --no-cache
