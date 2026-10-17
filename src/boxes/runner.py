@@ -485,7 +485,6 @@ def verify_paths(
     fallback = (
         _backend_fidelity(backend) != "vm"
         or not hasattr(backend, "snapshot")
-        or any(_attacker_for(s.recipe) for p in paths for s in p.steps)
     )
     if fallback:
         return [
@@ -493,8 +492,9 @@ def verify_paths(
             for path, manifest in zip(paths, manifests)
         ]
 
+    needs_attacker = any(_attacker_for(s.recipe) for p in paths for s in p.steps)
     base_label = f"paths seed={paths[0].seed}"
-    setup, err = _setup(backend, base_label, image, False, keep)
+    setup, err = _setup(backend, base_label, image, needs_attacker, keep)
     if setup is None:
         failed = VerifyResult(label=base_label)
         failed.ok = False
@@ -520,6 +520,25 @@ def verify_paths(
                 if not rest.ok:
                     results.append(result)
                     continue
+                if needs_attacker and setup.attacker is not None:
+                    setup.attacker_backend.destroy(setup.attacker)
+                    err = _create(
+                        setup.attacker_backend, setup.attacker, attacker_image(), network="none"
+                    )
+                    if err:
+                        result.add(StepResult("machine", "attacker-reset", False, 1, err))
+                        results.append(result)
+                        continue
+                    pid = getattr(setup.attacker_backend, "pid", lambda _n: 0)(setup.attacker)
+                    att = (
+                        backend.attach_attacker(setup.network, pid)
+                        if hasattr(backend, "attach_attacker") and pid
+                        else ExecResult(1, "", "backend cannot attach an attacker")
+                    )
+                    result.add(StepResult("machine", "attacker-reset", att.ok, att.exit_code, att.output()))
+                    if not att.ok:
+                        results.append(result)
+                        continue
 
             contexts = []
             for step in path.steps:

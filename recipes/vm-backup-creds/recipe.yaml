@@ -1,0 +1,24 @@
+id: vm-backup-creds
+version: 1.0.0
+kind: creds
+description: "A backup service on the VM leaks SSH credentials."
+os: ["ubuntu-*"]
+difficulty: 0.2
+provision: ./provision.sh
+poc:
+  context: attacker
+  vm: ./poc.sh
+requires:
+  - open_port($h, 8080)
+provides:
+  - creds($backup_user, $backup_pass)
+params:
+  backup_user:
+    type: choice
+    values: ["backup", "svc_backup"]
+  backup_pass:
+    type: password
+    length: 13
+walkthrough: |
+  A backup service on port 8080 serves `credentials.txt`, which leaks SSH
+  credentials: `{backup_user}` / `{backup_pass}`.

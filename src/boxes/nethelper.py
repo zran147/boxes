@@ -217,3 +217,35 @@ def provision_tap_down(name: str) -> dict:
         raise NetError(f"machine id {name!r} is too long for interface names")
     _try(["ip", "link", "del", f"tap-p-{name}"])
     return {"removed": f"tap-p-{name}"}
+
+
+def _link_exists(dev: str) -> bool:
+    return subprocess.run(["ip", "link", "show", dev], capture_output=True).returncode == 0
+
+
+def attach_attacker(name: str, attacker_pid: int) -> dict:
+    """Attach a freshly recreated attacker container to an existing attack bridge."""
+    if os.geteuid() != 0:
+        raise NetError("must run as root; use `sudo boxes net attach-attacker ...`")
+    if not NAME_RE.match(name):
+        raise NetError(f"invalid machine id {name!r}")
+    if len(name) > 9:
+        raise NetError(f"machine id {name!r} is too long for interface names")
+    pid = int(attacker_pid)
+    if pid <= 0 or not Path(f"/proc/{pid}").exists():
+        raise NetError(f"attacker pid {pid} does not exist")
+    br = f"br-{name}"
+    if not _link_exists(br):
+        raise NetError(f"attack bridge {br} does not exist")
+
+    veth = f"veth-{name}"
+    veth_c = f"veth-{name}c"
+    _try(["ip", "link", "del", veth])
+    _run(["ip", "link", "add", veth, "type", "veth", "peer", "name", veth_c])
+    _run(["ip", "link", "set", veth, "master", br])
+    _run(["ip", "link", "set", veth, "up"])
+    _run(["ip", "link", "set", veth_c, "netns", str(pid)])
+    _run(["nsenter", "-t", str(pid), "-n", "ip", "link", "set", veth_c, "name", "eth0"])
+    _run(["nsenter", "-t", str(pid), "-n", "ip", "addr", "replace", f"{DEFAULT_ATTACKER_IP}/24", "dev", "eth0"])
+    _run(["nsenter", "-t", str(pid), "-n", "ip", "link", "set", "eth0", "up"])
+    return {"bridge": br, "attacker_ip": DEFAULT_ATTACKER_IP}

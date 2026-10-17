@@ -216,6 +216,16 @@ class QemuBackend:
         path.unlink(missing_ok=True)
         return res
 
+    def attach_attacker(self, network: str, attacker_pid: int) -> ExecResult:
+        boxes = os.environ.get("BOXES_BIN") or shutil.which("boxes")
+        if not boxes:
+            return ExecResult(1, "", "`boxes` is not on PATH; install it or set BOXES_BIN")
+        short = self._short_id(network)
+        return self._run(
+            ["sudo", "-n", boxes, "net", "attach-attacker", short, str(attacker_pid)],
+            timeout=60,
+        )
+
     def create(
         self,
         name: str,

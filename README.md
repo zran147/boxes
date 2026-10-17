@@ -83,8 +83,11 @@ VM recipes (QEMU, TCG-verified):
 
 - `sudo-misconfig-privesc` — target-context sudo escalation; has both container
   and VM PoCs.
-- `vm-ssh-foothold` — attacker-context SSH foothold over a tap network
-  (requires the `boxes net` sudoers helper).
+- `vm-env-leak-creds` / `vm-backup-creds` — two independent VM credential leaks.
+- `vm-ssh-foothold` — attacker-context SSH foothold over a tap network.
+- `sudo-misconfig-privesc` — target-context sudo escalation; container and VM
+  PoCs.
+- `package-probe` — provisioning-proxy smoke test on both backends.
 
 Multi-path (`--multi-path N`) generates and verifies N independent full paths.
 
@@ -285,9 +288,9 @@ Snapshots (`savevm`/`loadvm`) let a provisioned VM be restored. VM verification
 takes a `pre-poc` snapshot after provisioning (and sealing), runs the PoCs, then
 `loadvm pre-poc` restores the provisioned state. Multi-path VM verification
 boots once: `savevm clean`, then for each path `loadvm clean` → provision →
-`savevm pre-poc` → PoCs → `loadvm pre-poc`. Attacker-context paths currently
-fall back to one machine per path because resetting the attacker container
-between snapshots is not wired yet.
+`savevm pre-poc` → PoCs → `loadvm pre-poc`. For attacker-context paths the
+attacker container is recreated and a fresh veth is attached to the existing
+attack bridge before the branch is provisioned.
 
 ### VM attacker PoCs (tap + bridge + veth)
 
@@ -397,6 +400,6 @@ The sudoers rule must allow the helper subcommands, hence `boxes net *`.
 |-------|-------|--------|
 | **P0** — symbolic generation | Facts + unification, typed predicates, recipes, bounded-length planner, `open_port` prelude, causal connectivity, two-seed manifest, lint, scaffold, per-recipe harness | **Done** |
 | **P1** — container fast path | Pluggable backend, target + attacker images, internal network, shared attacker container, provision/poc contract, assets, L2 + L3 verification, content-addressed cache, parallel jobs, real recipes | **Done** |
-| **P2** — fidelity + branching | QEMU + prebaked base + snapshots; `poc.container`/`poc.vm` per recipe; pre-PoC snapshot/restore; one-VM multi-path (`clean` + `pre-poc` snapshots, target-context); provisioning proxy on `br-provision` with egress-only phase and seal; shared-prefix DAG and attacker reset across VM paths next | **Partial** |
+| **P2** — fidelity + branching | QEMU + prebaked base + snapshots; `poc.container`/`poc.vm` per recipe; pre-PoC snapshot/restore; one-VM multi-path with attacker reset (`clean` + `pre-poc` snapshots); provisioning proxy on `br-provision` with egress-only phase and seal; shared-prefix DAG next | **Partial** |
 | **P3** — coherence + scale | Difficulty budgets, themes, typed choices, more distros, a complete attacker toolkit | Planned |
 | **P4** — registry | Recipe registry API + client, signed recipes, sandboxed execution, per-recipe CI | Planned |

@@ -19,6 +19,7 @@ from .lint import lint
 from .manifest import materialize
 from .nethelper import (
     NetError,
+    attach_attacker,
     down as net_down,
     provision_down,
     provision_tap,
@@ -400,6 +401,8 @@ def cmd_net(args) -> int:
                 print(json.dumps(provision_tap_down(args.name)))
             else:
                 print(json.dumps(provision_tap(args.name, args.user)))
+        elif args.net_command == "attach-attacker":
+            print(json.dumps(attach_attacker(args.name, args.attacker_pid)))
     except NetError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
@@ -521,6 +524,10 @@ def build_parser() -> argparse.ArgumentParser:
     pt.add_argument("--user", default=None)
     pt.add_argument("--down", action="store_true")
     pt.set_defaults(func=cmd_net)
+    aa = net_sub.add_parser("attach-attacker", help="attach a recreated attacker to an attack bridge")
+    aa.add_argument("name")
+    aa.add_argument("attacker_pid", type=int)
+    aa.set_defaults(func=cmd_net)
 
     px = sub.add_parser("proxy", help="package proxy/cache for provisioning")
     px_sub = px.add_subparsers(dest="proxy_command", required=True)
