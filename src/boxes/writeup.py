@@ -22,7 +22,8 @@ def render_markdown(plan: Plan, manifest: Manifest) -> str:
     lines: list[str] = []
     lines.append(f"# Generated machine — {plan.os_name}")
     lines.append("")
-    lines.append(f"- seed: `{plan.seed}`")
+    lines.append(f"- plan seed: `{plan.seed}`")
+    lines.append(f"- build seed: `{manifest.build_seed}`")
     lines.append(f"- services: {', '.join(str(p) for p in plan.ports)}")
     lines.append(f"- steps to user flag: {plan.user_index + 1}")
     lines.append(f"- steps to root flag: {plan.root_index - plan.user_index}")
@@ -70,7 +71,8 @@ def plan_to_dict(plan: Plan, manifest: Manifest) -> dict:
         )
     return {
         "os": plan.os_name,
-        "seed": plan.seed,
+        "plan_seed": plan.seed,
+        "build_seed": manifest.build_seed,
         "services": plan.ports,
         "steps_to_user": plan.user_index + 1,
         "steps_to_root": plan.root_index - plan.user_index,

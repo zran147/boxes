@@ -12,7 +12,7 @@ from .facts import Fact, parse_fact, validate_fact, vars_in
 
 KINDS = {"discovery", "service-access", "creds", "foothold", "privesc"}
 GOALS = {"user", "root"}
-PARAM_TYPES = {"choice", "password"}
+PARAM_TYPES = {"choice", "password", "token"}
 
 _SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
 

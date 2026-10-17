@@ -4,6 +4,9 @@ kind: creds
 description: A discovered admin endpoint leaks credentials for another service.
 os: ["ubuntu-*", "debian-*"]
 difficulty: 0.3
+fidelity: container
+provision: ./provision.sh
+poc: ./poc.sh
 requires:
   - net.port($h, 80)
   - knows(path, $path)
@@ -17,6 +20,5 @@ params:
     type: password
     length: 12
 walkthrough: |
-  The endpoint `{path}` we discovered is an admin panel. Its config file
-  leaks credentials for `{admin_user}` / `{admin_pass}`, which are reused
-  elsewhere on the box.
+  The endpoint `/{path}/config.php` we discovered leaks credentials for
+  `{admin_user}` / `{admin_pass}`, which are reused elsewhere on the box.

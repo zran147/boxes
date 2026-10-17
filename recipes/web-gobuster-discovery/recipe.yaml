@@ -4,6 +4,9 @@ kind: discovery
 description: Directory brute force against the web server discovers a hidden endpoint.
 os: ["ubuntu-*", "debian-*"]
 difficulty: 0.2
+fidelity: container
+provision: ./provision.sh
+poc: ./poc.sh
 requires:
   - net.port($h, 80)
 provides:
@@ -11,7 +14,7 @@ provides:
 params:
   path:
     type: choice
-    values: ["/admin.php", "/backup.zip", "/dev/", "/.git/"]
+    values: ["admin", "backup", "dev"]
 walkthrough: |
-  Directory brute forcing on port 80 turns up `{path}`, which was not linked
+  Directory brute forcing on port 80 turns up `/{path}/`, which was not linked
   anywhere on the site. (Discovery only — this tells us the endpoint exists.)

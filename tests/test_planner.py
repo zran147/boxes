@@ -48,15 +48,15 @@ def test_deterministic_under_same_seed(pool):
     a = generate(pool, OS, 3, 2, 123)
     b = generate(pool, OS, 3, 2, 123)
     assert [s.recipe.id for s in a.steps] == [s.recipe.id for s in b.steps]
-    ma = materialize(a, random.Random(123))
-    mb = materialize(b, random.Random(123))
+    ma = materialize(a, 123)
+    mb = materialize(b, 123)
     assert ma.values == mb.values
 
 
 def test_writeup_has_no_unresolved_placeholders(pool):
     for seed in range(20):
         plan = generate(pool, OS, 3, 2, seed)
-        m = materialize(plan, random.Random(seed))
+        m = materialize(plan, seed)
         text = render_markdown(plan, m) + str(plan_to_dict(plan, m))
         assert not re.findall(r"\{[A-Za-z0-9_.]+\}", text), f"seed {seed}"
 
@@ -71,7 +71,7 @@ def test_leaked_credentials_are_the_ones_used(pool):
             break
     assert plan is not None, "no ftp chain found"
 
-    m = materialize(plan, random.Random(0))
+    m = materialize(plan, 0)
     leak = next(s for s in plan.steps if s.recipe.id == "ftp-config-leak-creds")
     foothold = next(s for s in plan.steps if s.recipe.id == "ssh-creds-foothold")
 

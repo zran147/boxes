@@ -37,15 +37,10 @@ def backend():
     return b
 
 
-@pytest.mark.parametrize(
-    "recipe_id",
-    [
-        "web-rce-foothold",
-        "linpeas-suid-discovery",
-        "sudo-misconfig-privesc",
-        "suid-gtfobins-privesc",
-    ],
-)
+VERIFIABLE = [r.id for r in load_registry(RECIPES) if r.verifiable]
+
+
+@pytest.mark.parametrize("recipe_id", VERIFIABLE)
 def test_recipe_verifies_in_a_real_container(backend, recipe_id):
     recipe = next(r for r in load_registry(RECIPES) if r.id == recipe_id)
     fixture = check_recipe(recipe).fixture

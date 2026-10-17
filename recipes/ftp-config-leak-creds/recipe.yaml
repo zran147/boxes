@@ -4,8 +4,11 @@ kind: creds
 description: Enumerate the accessible FTP share and find leaked SSH credentials.
 os: ["ubuntu-*", "debian-*"]
 difficulty: 0.2
+fidelity: container
+provision: ./provision.sh
+poc: ./poc.sh
 requires:
-  - service_access(ftp)
+  - creds(ftp, $u, $p)
 provides:
   - creds(ssh, $ssh_user, $ssh_pass)
 params:

@@ -4,17 +4,21 @@ kind: service-access
 description: Log into FTP using a common/default credential pair.
 os: ["ubuntu-*", "debian-*"]
 difficulty: 0.1
+fidelity: container
+provision: ./provision.sh
+poc: ./poc.sh
 requires:
   - net.port($h, 21)
 provides:
   - service_access(ftp)
+  - creds(ftp, $ftp_user, $ftp_pass)
 params:
   ftp_user:
     type: choice
     values: ["anonymous", "ftp", "admin"]
   ftp_pass:
     type: choice
-    values: ["", "ftp", "admin"]
+    values: ["ftp", "admin", "password"]
 walkthrough: |
   An FTP service is exposed on port 21. Trying the common credential
   `{ftp_user}` / `{ftp_pass}` succeeds and drops us into the share, giving us

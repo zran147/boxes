@@ -65,6 +65,7 @@ just a difference in `requires`, which the planner handles automatically.
 PYTHONPATH=src python3 -m boxes lint
 PYTHONPATH=src python3 -m boxes recipes
 PYTHONPATH=src python3 -m boxes gen --to-user 3 --to-root 2 --seed 42
+PYTHONPATH=src python3 -m boxes gen --to-user 3 --to-root 2 --seed 42 --build-seed 2
 PYTHONPATH=src python3 -m boxes gen --to-user 2 --to-root 1 --json
 
 # recipe tooling
@@ -77,6 +78,28 @@ PYTHONPATH=src python3 -m boxes test-recipe ssh-creds-foothold --fixture
 Or install it: `pip install -e .` then use `boxes ...`.
 
 Run the tests with `python3 -m pytest`.
+
+## Seeds
+
+Two independent seeds:
+
+- `--seed` picks the **plan** — which recipes, in what order.
+- `--build-seed` materialises the **values inside** those recipes — usernames,
+  passwords, filenames, chosen binaries.
+
+If `--build-seed` is omitted it defaults to `--seed`, so one seed still
+reproduces a whole machine. Split them to get a *family*: same attack path,
+different flavour.
+
+```bash
+PYTHONPATH=src python3 -m boxes gen --seed 42 --build-seed 1   # path A, flavour 1
+PYTHONPATH=src python3 -m boxes gen --seed 42 --build-seed 2   # path A, flavour 2
+```
+
+Values are derived per `(build_seed, recipe, parameter)` rather than drawn from
+one global stream, so adding or reordering a step does not scramble every other
+value. Recipe params can be `choice`, `password`, or `token` (for randomised
+filenames/identifiers).
 
 ## Recipe tooling and the test harness
 
@@ -152,8 +175,12 @@ PYTHONPATH=src python3 -m boxes verify --recipe sudo-misconfig-privesc
 PYTHONPATH=src python3 -m boxes verify --all
 
 # L3: build a whole machine and run the full chain
-PYTHONPATH=src python3 -m boxes verify --machine --to-user 1 --to-root 2 --seed 1
+PYTHONPATH=src python3 -m boxes verify --machine --to-user 3 --to-root 2 --seed 0
 ```
+
+All shipped recipes are verifiable, including the FTP → leaked creds → SSH
+foothold chain and the web discovery → admin creds → SSH chain. The base image
+carries `vsftpd`, `openssh-server`, `openssh-client` and `sshpass` for them.
 
 ### Recipe verification contract
 
@@ -184,8 +211,8 @@ silently skipping them.
 ## Not done yet (P2+)
 
 - QEMU backend (`fidelity: vm`) for kernel/boot-level recipes; snapshots.
-- Make the symbolic recipes verifiable (FTP server, SSH foothold) and broaden
-  parameter value sets only where provisioning+PoC support every value.
+- Broaden parameter value sets only where provisioning+PoC support every value
+  (a random choice is only valid if provision and PoC handle it).
 - Per-recipe verification caching (fixtures/content hashes) and parallel runs.
 - Difficulty budgets and themes for coherence; multiple paths per flag (DAG
   instead of a chain); more distros.

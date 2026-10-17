@@ -4,6 +4,9 @@ kind: foothold
 description: Reuse discovered credentials to obtain an interactive SSH shell.
 os: ["ubuntu-*", "debian-*"]
 difficulty: 0.2
+fidelity: container
+provision: ./provision.sh
+poc: ./poc.sh
 yields: ["user"]
 requires:
   - net.port($h, 22)

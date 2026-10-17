@@ -9,6 +9,7 @@ SSH account was configured with.
 
 from __future__ import annotations
 
+import hashlib
 import random
 from dataclasses import dataclass
 
@@ -17,6 +18,17 @@ from .planner import Plan, Step
 from .recipe import ParamSpec
 
 _PW_CHARS = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+_TOKEN_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789"
+
+
+def derive_seed(build_seed: int, *parts: str) -> int:
+    """Deterministic sub-seed, independent of plan order.
+
+    Deriving per parameter (rather than drawing from one stream) means adding or
+    reordering recipes in a plan does not change the values of unrelated ones.
+    """
+    material = ":".join([str(build_seed), *parts]).encode()
+    return int.from_bytes(hashlib.sha256(material).digest()[:8], "big")
 
 
 class _UF:
@@ -48,6 +60,7 @@ class _UF:
 class Manifest:
     values: dict[str, object]  # var name -> grounded value
     uf: _UF
+    build_seed: int = 0
 
     def value_of(self, varname: str) -> object:
         return self.values.get(self.uf.find(varname), f"<{varname}>")
@@ -87,10 +100,12 @@ def generate_param(spec: ParamSpec, rng: random.Random):
         return rng.choice(list(spec.values or []))
     if spec.type == "password":
         return "".join(rng.choice(_PW_CHARS) for _ in range(spec.length))
+    if spec.type == "token":
+        return "".join(rng.choice(_TOKEN_CHARS) for _ in range(spec.length))
     raise ValueError(f"unknown param type {spec.type!r}")
 
 
-def materialize(plan: Plan, rng: random.Random) -> Manifest:
+def materialize(plan: Plan, build_seed: int) -> Manifest:
     uf = _UF()
     fixed_by_var: dict[str, object] = {}
 
@@ -121,10 +136,14 @@ def materialize(plan: Plan, rng: random.Random) -> Manifest:
         if fixed is not None:
             values[root] = fixed
             continue
-        spec = next((_spec_for(plan, m) for m in members if _spec_for(plan, m) is not None), None)
-        values[root] = generate_param(spec, rng) if spec is not None else None
+        spec_member = next((m for m in members if _spec_for(plan, m) is not None), None)
+        if spec_member is None:
+            values[root] = None
+            continue
+        spec = _spec_for(plan, spec_member)
+        values[root] = generate_param(spec, random.Random(derive_seed(build_seed, spec_member)))
 
-    return Manifest(values=values, uf=uf)
+    return Manifest(values=values, uf=uf, build_seed=build_seed)
 
 
 def _vars(f: Fact) -> set[str]:

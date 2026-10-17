@@ -17,6 +17,10 @@ RUN apt-get update \
         procps \
         iproute2 \
         less \
+        vsftpd \
+        openssh-server \
+        openssh-client \
+        sshpass \
  && rm -rf /var/lib/apt/lists/*
 
 # An unprivileged "attacker" principal that network-facing PoCs run as.

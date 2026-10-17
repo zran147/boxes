@@ -4,6 +4,9 @@ kind: creds
 description: An exposed .env file on the web server leaks service credentials.
 os: ["ubuntu-*", "debian-*"]
 difficulty: 0.2
+fidelity: container
+provision: ./provision.sh
+poc: ./poc.sh
 requires:
   - net.port($h, 80)
 provides:

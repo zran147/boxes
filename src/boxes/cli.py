@@ -52,8 +52,8 @@ def cmd_gen(args) -> int:
         print("internal error: generated plan does not satisfy itself", file=sys.stderr)
         return 3
 
-    rng = random.Random(seed ^ 0xB0_5E5)
-    manifest = materialize(plan, rng)
+    build_seed = args.build_seed if args.build_seed is not None else seed
+    manifest = materialize(plan, build_seed)
 
     if args.json:
         print(json.dumps(plan_to_dict(plan, manifest), indent=2))
@@ -183,8 +183,8 @@ def cmd_verify(args) -> int:
         if plan is None:
             print("could not generate a machine for those depths", file=sys.stderr)
             return 1
-        rng = random.Random(args.seed ^ 0xB0_5E5)
-        manifest = materialize(plan, rng)
+        build_seed = args.build_seed if args.build_seed is not None else args.seed
+        manifest = materialize(plan, build_seed)
         print("chain: " + " -> ".join(s.recipe.id for s in plan.steps))
         result = verify_machine(plan, manifest, backend, image_tag(args.os), keep=args.keep)
         _print_verify(result)
@@ -234,7 +234,9 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--os", default="ubuntu-22.04")
     g.add_argument("--to-user", type=int, default=3, dest="to_user")
     g.add_argument("--to-root", type=int, default=2, dest="to_root")
-    g.add_argument("--seed", type=int, default=None)
+    g.add_argument("--seed", type=int, default=None, help="plan/chain seed")
+    g.add_argument("--build-seed", type=int, default=None, dest="build_seed",
+                   help="param materialisation seed (defaults to --seed)")
     g.add_argument("--json", action="store_true")
     g.set_defaults(func=cmd_gen)
 
@@ -273,6 +275,8 @@ def build_parser() -> argparse.ArgumentParser:
     v.add_argument("--all", action="store_true", help="verify every verifiable recipe")
     v.add_argument("--machine", action="store_true", help="build and verify a full chain (L3)")
     v.add_argument("--seed", type=int, default=0)
+    v.add_argument("--build-seed", type=int, default=None, dest="build_seed",
+                   help="param materialisation seed (defaults to --seed)")
     v.add_argument("--to-user", type=int, default=1, dest="to_user")
     v.add_argument("--to-root", type=int, default=1, dest="to_root")
     v.add_argument("--os", default="ubuntu-22.04")
