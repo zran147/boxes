@@ -1,0 +1,20 @@
+id: vm-package-probe
+version: 1.0.0
+kind: discovery
+description: "Provisioning smoke test: install a package through the proxy."
+os: ["ubuntu-*"]
+difficulty: 0.1
+fidelity: vm
+provision: ./provision.sh
+poc:
+  script: ./poc.sh
+  context: target
+actor: boxes
+poc_timeout: 120
+requires:
+  - open_port($h, 22)
+provides:
+  - knows(package, sl)
+walkthrough: |
+  Provisioning installs `sl` through the package proxy; the PoC checks it is
+  present. This is a provisioning smoke test, not a real machine step.
