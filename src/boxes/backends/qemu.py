@@ -34,6 +34,7 @@ from .base import ExecResult
 QEMU = "qemu-system-x86_64"
 BOOT_TIMEOUT = 600
 TAP_MAC = "52:54:00:be:ef:01"
+PROV_MAC = "52:54:00:be:ef:02"
 
 
 class QemuBackend:
@@ -215,7 +216,14 @@ class QemuBackend:
         path.unlink(missing_ok=True)
         return res
 
-    def create(self, name: str, image: str, network: str = "none", alias: str | None = None) -> ExecResult:
+    def create(
+        self,
+        name: str,
+        image: str,
+        network: str = "none",
+        alias: str | None = None,
+        provision: bool = False,
+    ) -> ExecResult:
         if not self.available():
             return ExecResult(1, "", f"qemu backend not ready ({self.base})")
         overlay = self.run_dir / f"{name}.qcow2"
@@ -228,8 +236,32 @@ class QemuBackend:
         if not res.ok:
             return res
         port = self._free_port()
-        self._save(name, {"overlay": str(overlay), "log": str(log), "pidfile": str(pidfile),
-                          "port": port, "monitor": str(mon), "name": name})
+        state = {"overlay": str(overlay), "log": str(log), "pidfile": str(pidfile),
+                 "port": port, "monitor": str(mon), "name": name}
+
+        prov_tap = None
+        prov_ip = None
+        prov_short = self._short_id(name)
+        if provision:
+            boxes = os.environ.get("BOXES_BIN") or shutil.which("boxes")
+            if not boxes:
+                return ExecResult(1, "", "`boxes` is not on PATH; install it or set BOXES_BIN")
+            user = os.environ.get("SUDO_USER") or getpass.getuser()
+            res = self._run(
+                ["sudo", "-n", boxes, "net", "provision-tap", prov_short, "--user", user],
+                timeout=60,
+            )
+            if not res.ok:
+                return res
+            try:
+                prov_tap = json.loads(res.stdout)["tap"]
+            except (json.JSONDecodeError, KeyError):
+                return ExecResult(1, res.stdout, "could not parse provision tap output")
+            prov_ip = self._provision_ip(name)
+            state.update({"provision_tap": prov_tap, "provision_ip": prov_ip,
+                          "provision_short": prov_short})
+        self._save(name, state)
+
         args = [
             QEMU,
             "-accel", "tcg,thread=multi",
@@ -242,9 +274,10 @@ class QemuBackend:
             # support snapshots)
             args += ["-drive", f"file={self.seed},if=virtio,format=raw,readonly=on"]
         # management NIC must be first: the pre-baked netplan configures the
-        # first interface (ens3) for DHCP/SSH
+        # first interface (ens3) for DHCP/SSH. restrict=on leaves the SSH
+        # hostfwd working but gives the guest no internet/host route.
         args += [
-            "-netdev", f"user,id=n0,hostfwd=tcp:127.0.0.1:{port}-:22",
+            "-netdev", f"user,id=n0,restrict=on,hostfwd=tcp:127.0.0.1:{port}-:22",
             "-device", "virtio-net-pci,netdev=n0",
         ]
         net_info = self.network_info(network) if network != "none" else None
@@ -252,6 +285,11 @@ class QemuBackend:
             args += [
                 "-netdev", f"tap,id=net1,ifname={net_info['tap']},script=no,downscript=no",
                 "-device", f"virtio-net-pci,netdev=net1,mac={TAP_MAC}",
+            ]
+        if prov_tap is not None:
+            args += [
+                "-netdev", f"tap,id=net2,ifname={prov_tap},script=no,downscript=no",
+                "-device", f"virtio-net-pci,netdev=net2,mac={PROV_MAC}",
             ]
         args += [
             "-display", "none",
@@ -278,7 +316,34 @@ class QemuBackend:
             res = self.exec(name, script, timeout=60)
             if not res.ok:
                 return ExecResult(1, res.stdout, f"could not configure tap NIC: {res.stderr}")
+        if prov_tap is not None:
+            script = (
+                f"dev=$(ip -o link | awk -F': ' '/{PROV_MAC}/ {{print $2; exit}}')\n"
+                "test -n \"$dev\"\n"
+                f"ip addr replace {prov_ip}/24 dev \"$dev\"\n"
+                "ip link set \"$dev\" up\n"
+                "echo \"$dev\"\n"
+            )
+            res = self.exec(name, script, timeout=60)
+            if not res.ok:
+                return ExecResult(1, res.stdout, f"could not configure provision NIC: {res.stderr}")
+            dev = res.stdout.strip().splitlines()[-1] if res.stdout.strip() else ""
+            if dev:
+                state["provision_dev"] = dev
+                self._save(name, state)
         return ExecResult(0, "", "")
+
+    def _provision_ip(self, name: str) -> str:
+        h = int(hashlib.sha1(name.encode()).hexdigest()[:6], 16)
+        return f"10.67.0.{10 + h % 200}"
+
+    def seal(self, name: str) -> ExecResult:
+        """Disconnect the provision NIC before PoCs (host-only phase)."""
+        st = self._load(name)
+        dev = st.get("provision_dev")
+        if not dev:
+            return ExecResult(0, "", "")
+        return self.exec(name, f"ip link set {shlex.quote(dev)} down", timeout=30)
 
     def _free_port(self) -> int:
         s = socket.socket()
@@ -364,6 +429,10 @@ class QemuBackend:
         for path in (st.get("overlay"), st.get("pidfile"), st.get("log"), st.get("monitor")):
             if path:
                 Path(path).unlink(missing_ok=True)
+        short = st.get("provision_short")
+        boxes = os.environ.get("BOXES_BIN") or shutil.which("boxes")
+        if short and boxes:
+            self._run(["sudo", "-n", boxes, "net", "provision-tap", short, "--down"], timeout=60)
         self._state_path(name).unlink(missing_ok=True)
         Path(self._sock(name)).unlink(missing_ok=True)
         return ExecResult(0, "", "")

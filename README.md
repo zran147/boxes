@@ -301,7 +301,7 @@ Allow the helper in sudoers, using the path from `command -v boxes` (or the venv
 binary):
 
 ```
-user ALL=(root) NOPASSWD: /usr/local/bin/boxes net up *, /usr/local/bin/boxes net down *
+user ALL=(root) NOPASSWD: /usr/local/bin/boxes net *
 ```
 
 For the venv, put `/opt/boxes-venv/bin/boxes` in the rule and run with
@@ -344,12 +344,43 @@ The attack bridge has no uplink or host IP; the VM's management NIC (user-mode +
 SSH hostfwd) is separate. If QEMU cannot open the pre-created tap unprivileged,
 give a QEMU wrapper `cap_net_admin` or pass the tap fd from the helper.
 
+### Provisioning proxy (`br-provision`)
+
+Targets get **no direct internet**. During provisioning a VM gets an extra NIC
+on the shared `br-provision` bridge, where the proxy container lives; that NIC
+is brought down before PoCs. The proxy is the only egress.
+
+```bash
+boxes proxy up        # build/start boxes-proxy, create br-provision
+boxes proxy status
+boxes proxy down
+boxes proxy clean     # also remove the cache volume
+```
+
+`boxes proxy up` builds `boxes/proxy` (apt-cacher-ng), starts `boxes-proxy` on
+the `boxes-provision` Docker network, and attaches it to `br-provision` at
+`10.67.0.2`. Provisioning receives:
+
+- `BOX_PROXY_URL` and `http_proxy`/`https_proxy` pointing at
+  `http://10.67.0.2:3142`;
+- a provision NIC (`10.67.0.x`) on `br-provision`, configured by the backend;
+- a `seal` step after provisioning that brings that NIC down.
+
+The VM's management NIC uses QEMU `restrict=on`, so SSH hostfwd still works but
+the guest has no route to the host or internet. During provisioning, apt goes
+to the proxy; after the seal, only the host-only attack network remains.
+
+The proxy cache is a persistent Docker volume (`boxes-proxy-cache`). It covers
+apt today; pip/artifact proxying and pinned snapshot dates are the next step.
+
+The sudoers rule must allow the helper subcommands, hence `boxes net *`.
+
 ## Roadmap
 
 | Stage | Scope | Status |
 |-------|-------|--------|
 | **P0** — symbolic generation | Facts + unification, typed predicates, recipes, bounded-length planner, `open_port` prelude, causal connectivity, two-seed manifest, lint, scaffold, per-recipe harness | **Done** |
 | **P1** — container fast path | Pluggable backend, target + attacker images, internal network, shared attacker container, provision/poc contract, assets, L2 + L3 verification, content-addressed cache, parallel jobs, real recipes | **Done** |
-| **P2** — fidelity + branching | QEMU + prebaked base + snapshots; target- and attacker-context PoCs verified under TCG; independent multi-path (`--multi-path`); shared-prefix DAG next | **Partial** |
+| **P2** — fidelity + branching | QEMU + prebaked base + snapshots; target- and attacker-context PoCs verified under TCG; provisioning proxy on `br-provision` with egress-only phase and seal; independent multi-path (`--multi-path`); shared-prefix DAG next | **Partial** |
 | **P3** — coherence + scale | Difficulty budgets, themes, typed choices, more distros, a complete attacker toolkit | Planned |
 | **P4** — registry | Recipe registry API + client, signed recipes, sandboxed execution, per-recipe CI | Planned |

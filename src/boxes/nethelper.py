@@ -25,6 +25,28 @@ SUBNET = ipaddress.ip_network("10.66.1.0/24")
 DEFAULT_VM_IP = "10.66.1.2"
 DEFAULT_ATTACKER_IP = "10.66.1.3"
 
+PROVISION_BR = "br-provision"
+PROVISION_VETH = "veth-prov"
+PROVISION_VETH_C = "veth-provc"
+PROVISION_IP = "10.67.0.2"
+
+
+def _ensure_forward(br: str) -> None:
+    if not shutil.which("iptables"):
+        return
+    check = subprocess.run(
+        ["iptables", "-C", "FORWARD", "-i", br, "-o", br, "-j", "ACCEPT"],
+        capture_output=True,
+    )
+    if check.returncode != 0:
+        _try(["iptables", "-I", "FORWARD", "-i", br, "-o", br, "-j", "ACCEPT"])
+
+
+def _ensure_bridge(br: str) -> None:
+    _try(["ip", "link", "add", br, "type", "bridge"])
+    _run(["ip", "link", "set", br, "up"])
+    _ensure_forward(br)
+
 
 class NetError(RuntimeError):
     pass
@@ -99,8 +121,7 @@ def up(
     _run(["ip", "link", "set", br, "up"])
     # Docker enables br_netfilter, so bridged IP traffic traverses FORWARD,
     # which Docker's policy drops for unknown bridges. Allow this bridge only.
-    if shutil.which("iptables"):
-        _try(["iptables", "-I", "FORWARD", "-i", br, "-o", br, "-j", "ACCEPT"])
+    _ensure_forward(br)
     _run(["ip", "tuntap", "add", "dev", tap, "mode", "tap", "user", user])
     _run(["ip", "link", "set", tap, "master", br])
     _run(["ip", "link", "set", tap, "up"])
@@ -135,3 +156,64 @@ def down(name: str) -> dict:
     for dev in (f"tap-{name}", f"veth-{name}", f"br-{name}"):
         _try(["ip", "link", "del", dev])
     return {"machine": name, "removed": True}
+
+
+# --- shared provisioning network -------------------------------------------
+
+
+def provision_up(proxy_pid: int) -> dict:
+    if os.geteuid() != 0:
+        raise NetError("must run as root; use `sudo boxes net provision-up ...`")
+    pid = int(proxy_pid)
+    if pid <= 0 or not Path(f"/proc/{pid}").exists():
+        raise NetError(f"proxy pid {pid} does not exist")
+
+    _ensure_bridge(PROVISION_BR)
+    _try(["ip", "link", "del", PROVISION_VETH])
+    _run(["ip", "link", "add", PROVISION_VETH, "type", "veth", "peer", "name", PROVISION_VETH_C])
+    _run(["ip", "link", "set", PROVISION_VETH, "master", PROVISION_BR])
+    _run(["ip", "link", "set", PROVISION_VETH, "up"])
+    _run(["ip", "link", "set", PROVISION_VETH_C, "netns", str(pid)])
+    _run(["nsenter", "-t", str(pid), "-n", "ip", "link", "set", PROVISION_VETH_C, "name", "eth1"])
+    _run(["nsenter", "-t", str(pid), "-n", "ip", "addr", "replace", f"{PROVISION_IP}/24", "dev", "eth1"])
+    _run(["nsenter", "-t", str(pid), "-n", "ip", "link", "set", "eth1", "up"])
+    return {"bridge": PROVISION_BR, "veth": PROVISION_VETH, "proxy_ip": PROVISION_IP}
+
+
+def provision_down() -> dict:
+    if os.geteuid() != 0:
+        raise NetError("must run as root; use `sudo boxes net provision-down`")
+    _try(["ip", "link", "del", PROVISION_VETH])
+    # keep br-provision and its FORWARD rule: other machines may still use it
+    return {"removed": PROVISION_VETH}
+
+
+def provision_tap(name: str, user: str | None = None) -> dict:
+    if os.geteuid() != 0:
+        raise NetError("must run as root; use `sudo boxes net provision-tap ...`")
+    if not NAME_RE.match(name):
+        raise NetError(f"invalid machine id {name!r}")
+    if len(name) > 9:
+        raise NetError(f"machine id {name!r} is too long for interface names")
+    user = user or os.environ.get("SUDO_USER") or getpass.getuser()
+    try:
+        pwd.getpwnam(user)
+    except KeyError as e:
+        raise NetError(f"unknown user {user!r}") from e
+
+    tap = f"tap-p-{name}"
+    _ensure_bridge(PROVISION_BR)
+    _try(["ip", "link", "del", tap])
+    _run(["ip", "tuntap", "add", "dev", tap, "mode", "tap", "user", user])
+    _run(["ip", "link", "set", tap, "master", PROVISION_BR])
+    _run(["ip", "link", "set", tap, "up"])
+    return {"tap": tap, "bridge": PROVISION_BR}
+
+
+def provision_tap_down(name: str) -> dict:
+    if os.geteuid() != 0:
+        raise NetError("must run as root; use `sudo boxes net provision-tap ... --down`")
+    if len(name) > 9:
+        raise NetError(f"machine id {name!r} is too long for interface names")
+    _try(["ip", "link", "del", f"tap-p-{name}"])
+    return {"removed": f"tap-p-{name}"}

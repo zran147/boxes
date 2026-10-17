@@ -28,6 +28,8 @@ from .cache import Cache, recipe_key
 from .images import attacker_image
 from .manifest import Manifest
 from .planner import Plan
+from .proxy import PROXY_IP, PROXY_PORT
+from . import proxy as proxy_mod
 from .recipe import Recipe
 
 PROVISION_TIMEOUT = 300
@@ -70,13 +72,28 @@ def _env_key(name: str) -> str:
     return "BOX_" + re.sub(r"[^A-Za-z0-9]", "_", name).upper()
 
 
-def build_env(recipe: Recipe, ctx: dict, os_name: str, host: str = "127.0.0.1") -> dict[str, str]:
+def build_env(
+    recipe: Recipe,
+    ctx: dict,
+    os_name: str,
+    host: str = "127.0.0.1",
+    proxy: bool = False,
+) -> dict[str, str]:
     env = {_env_key(key): str(value) for key, value in ctx.items()}
     # reserved keys always win over a recipe param with the same name
     env["BOX_RECIPE"] = recipe.id
     env["BOX_OS"] = os_name
     env["BOX_ASSETS"] = f"/opt/boxes/{recipe.id}"
     env["BOX_HOST"] = host
+    if proxy:
+        url = f"http://{PROXY_IP}:{PROXY_PORT}"
+        env["BOX_PROXY_URL"] = url
+        env["http_proxy"] = url
+        env["https_proxy"] = url
+        env["HTTP_PROXY"] = url
+        env["HTTPS_PROXY"] = url
+        env["no_proxy"] = "localhost,127.0.0.1"
+        env["NO_PROXY"] = "localhost,127.0.0.1"
     return env
 
 
@@ -124,6 +141,7 @@ def _run_script(
     user: str | None,
     timeout: int,
     host: str = "127.0.0.1",
+    proxy: bool = False,
 ) -> ExecResult:
     try:
         script = recipe.script(phase).read_text()
@@ -133,7 +151,7 @@ def _run_script(
         container,
         script,
         user=user,
-        env=build_env(recipe, ctx, os_name, host=host),
+        env=build_env(recipe, ctx, os_name, host=host, proxy=proxy),
         timeout=timeout,
     )
 
@@ -165,8 +183,9 @@ def _create(
     image: str,
     network: str = "none",
     alias: str | None = None,
+    provision: bool = False,
 ) -> str | None:
-    res = backend.create(container, image, network=network, alias=alias)
+    res = backend.create(container, image, network=network, alias=alias, provision=provision)
     if res.ok:
         return None
     return f"could not create {container}: {res.output()}"
@@ -184,6 +203,7 @@ class _Setup:
     attacker_backend: Backend | None = None
     host: str = "target"
     kept: bool = False
+    provision: bool = False
 
 
 def _setup(
@@ -194,12 +214,14 @@ def _setup(
     keep: bool,
 ) -> tuple[_Setup | None, str | None]:
     vm = _backend_fidelity(backend) == "vm"
+    provision = vm and proxy_mod.is_up()
     setup = _Setup(
         target=_container_name("target", label),
         network=_network_name(label) if (needs_attacker or not vm) else None,
         attacker=_container_name("attacker", label) if needs_attacker else None,
         attacker_backend=_attacker_backend(backend) if needs_attacker else None,
         kept=keep,
+        provision=provision,
     )
 
     # VM: the attacker container must exist before `boxes net up` (it needs the
@@ -234,6 +256,7 @@ def _setup(
         image,
         network=setup.network or "none",
         alias="target" if setup.network else None,
+        provision=setup.provision,
     )
     if err:
         _teardown(backend, setup, keep=False)
@@ -336,10 +359,16 @@ def verify_recipe(
         assets = _copy_assets(backend, setup.target, recipe)
         result.add(_to_step(recipe, "assets", assets))
         prov = _run_script(
-            backend, setup.target, recipe, "provision", ctx, fixture.os, None, PROVISION_TIMEOUT
+            backend, setup.target, recipe, "provision", ctx, fixture.os, None,
+            PROVISION_TIMEOUT, proxy=setup.provision,
         )
         result.add(_to_step(recipe, "provision", prov))
         if prov.ok:
+            if setup.provision and hasattr(backend, "seal"):
+                sealed = backend.seal(setup.target)
+                result.add(
+                    StepResult(recipe.id, "seal", sealed.ok, sealed.exit_code, sealed.output())
+                )
             _poc(backend, setup, recipe, ctx, fixture.os, result)
     finally:
         _teardown(backend, setup, keep)
@@ -393,9 +422,14 @@ def verify_machine(
             assets = _copy_assets(backend, setup.target, step.recipe)
             result.add(_to_step(step.recipe, "assets", assets))
             res = _run_script(
-                backend, setup.target, step.recipe, "provision", ctx, plan.os_name, None, PROVISION_TIMEOUT
+                backend, setup.target, step.recipe, "provision", ctx, plan.os_name, None,
+                PROVISION_TIMEOUT, proxy=setup.provision,
             )
             result.add(_to_step(step.recipe, "provision", res))
+
+        if setup.provision and hasattr(backend, "seal"):
+            sealed = backend.seal(setup.target)
+            result.add(StepResult("machine", "seal", sealed.ok, sealed.exit_code, sealed.output()))
 
         for step, ctx in zip(plan.steps, contexts):
             _poc(backend, setup, step.recipe, ctx, plan.os_name, result)

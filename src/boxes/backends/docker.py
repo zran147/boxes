@@ -75,6 +75,7 @@ class DockerBackend:
         image: str,
         network: str = "none",
         alias: str | None = None,
+        provision: bool = False,
     ) -> ExecResult:
         args = [
             "run",

@@ -17,7 +17,15 @@ from .harness import check_recipe
 from .images import PROJECT_ROOT, attacker_image, ensure_attacker_image, ensure_image, image_tag
 from .lint import lint
 from .manifest import materialize
-from .nethelper import NetError, down as net_down, up as net_up
+from .nethelper import (
+    NetError,
+    down as net_down,
+    provision_down,
+    provision_tap,
+    provision_tap_down,
+    provision_up,
+    up as net_up,
+)
 from .planner import generate, generate_paths, satisfies
 from .registry import load_registry, select
 from .runner import verify_machine, verify_recipes
@@ -368,13 +376,43 @@ def cmd_verify(args) -> int:
 def cmd_net(args) -> int:
     try:
         if args.net_command == "up":
-            info = net_up(args.name, args.attacker_pid, args.user, args.vm_ip, args.attacker_ip)
-            print(json.dumps(info))
-        else:
+            print(json.dumps(net_up(args.name, args.attacker_pid, args.user, args.vm_ip, args.attacker_ip)))
+        elif args.net_command == "down":
             print(json.dumps(net_down(args.name)))
+        elif args.net_command == "provision-up":
+            print(json.dumps(provision_up(args.proxy_pid)))
+        elif args.net_command == "provision-down":
+            print(json.dumps(provision_down()))
+        elif args.net_command == "provision-tap":
+            if args.down:
+                print(json.dumps(provision_tap_down(args.name)))
+            else:
+                print(json.dumps(provision_tap(args.name, args.user)))
     except NetError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
+    return 0
+
+
+def cmd_proxy(args) -> int:
+    from . import proxy as proxy_mod
+
+    if args.proxy_command == "up":
+        res = proxy_mod.up(rebuild=args.rebuild)
+    elif args.proxy_command == "down":
+        res = proxy_mod.down(clean=args.clean)
+    elif args.proxy_command == "clean":
+        res = proxy_mod.down(clean=True)
+    elif args.proxy_command == "status":
+        print(json.dumps(proxy_mod.status(), indent=2))
+        return 0
+    else:
+        return 2
+    if not res.ok:
+        print("proxy operation failed:", file=sys.stderr)
+        print(res.output(), file=sys.stderr)
+        return 1
+    print(res.stdout.strip() or "ok")
     return 0
 
 
@@ -461,6 +499,29 @@ def build_parser() -> argparse.ArgumentParser:
     nd = net_sub.add_parser("down", help="remove bridge + tap + veth")
     nd.add_argument("name")
     nd.set_defaults(func=cmd_net)
+    pu = net_sub.add_parser("provision-up", help="attach the proxy to br-provision")
+    pu.add_argument("proxy_pid", type=int)
+    pu.set_defaults(func=cmd_net)
+    pd = net_sub.add_parser("provision-down", help="detach the proxy from br-provision")
+    pd.set_defaults(func=cmd_net)
+    pt = net_sub.add_parser("provision-tap", help="create/remove a VM provisioning tap")
+    pt.add_argument("name")
+    pt.add_argument("--user", default=None)
+    pt.add_argument("--down", action="store_true")
+    pt.set_defaults(func=cmd_net)
+
+    px = sub.add_parser("proxy", help="package proxy/cache for provisioning")
+    px_sub = px.add_subparsers(dest="proxy_command", required=True)
+    pu = px_sub.add_parser("up", help="build/start the proxy and attach it")
+    pu.add_argument("--rebuild", action="store_true")
+    pu.set_defaults(func=cmd_proxy)
+    pd = px_sub.add_parser("down", help="stop the proxy")
+    pd.add_argument("--clean", action="store_true")
+    pd.set_defaults(func=cmd_proxy)
+    ps = px_sub.add_parser("status", help="show proxy status")
+    ps.set_defaults(func=cmd_proxy)
+    pc = px_sub.add_parser("clean", help="stop the proxy and wipe the cache")
+    pc.set_defaults(func=cmd_proxy)
 
     return p
 

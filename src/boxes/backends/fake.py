@@ -59,8 +59,9 @@ class FakeBackend:
         image: str,
         network: str = "none",
         alias: str | None = None,
+        provision: bool = False,
     ) -> ExecResult:
-        self.calls.append(("create", name, image, network, alias))
+        self.calls.append(("create", name, image, network, alias, provision))
         self.created.append(name)
         return ExecResult(0, "", "")
 
