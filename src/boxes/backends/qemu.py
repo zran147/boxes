@@ -17,6 +17,8 @@ and are not supported by this backend yet.
 
 from __future__ import annotations
 
+import getpass
+import hashlib
 import json
 import os
 import re
@@ -165,6 +167,14 @@ class QemuBackend:
     def build_image(self, tag: str, context: str) -> ExecResult:
         return ExecResult(1, "", "use `boxes image prep-vm` to build the VM base")
 
+    def _net_state(self, name: str) -> Path:
+        return self.run_dir / f"net-{name}.json"
+
+    def _short_id(self, name: str) -> str:
+        # Linux interface names are limited to 15 chars; keep br-/tap-/veth-
+        # prefixes short enough.
+        return hashlib.sha1(name.encode()).hexdigest()[:8]
+
     def network_create(self, name: str, attacker_pid: int | None = None) -> ExecResult:
         if attacker_pid is None:
             return ExecResult(1, "", "VM attacker networking requires an attacker pid")
@@ -172,9 +182,10 @@ class QemuBackend:
         if not boxes:
             return ExecResult(1, "", "`boxes` is not on PATH; install it or set BOXES_BIN")
         user = os.environ.get("SUDO_USER") or getpass.getuser()
+        short = self._short_id(name)
         res = self._run(
             [
-                "sudo", "-n", boxes, "net", "up", name,
+                "sudo", "-n", boxes, "net", "up", short,
                 "--attacker-pid", str(attacker_pid), "--user", user,
             ],
             timeout=60,
@@ -185,21 +196,22 @@ class QemuBackend:
             info = json.loads(res.stdout)
         except json.JSONDecodeError:
             return ExecResult(1, res.stdout, "could not parse `boxes net up` output")
-        (self.run_dir / f"net-{name}.json").write_text(json.dumps(info))
+        self._net_state(name).write_text(json.dumps(info))
         return ExecResult(0, res.stdout, "")
 
     def network_info(self, name: str) -> dict | None:
-        path = self.run_dir / f"net-{name}.json"
+        path = self._net_state(name)
         if not path.is_file():
             return None
         return json.loads(path.read_text())
 
     def network_destroy(self, name: str) -> ExecResult:
-        path = self.run_dir / f"net-{name}.json"
+        path = self._net_state(name)
         boxes = os.environ.get("BOXES_BIN") or shutil.which("boxes")
         res = ExecResult(0, "", "")
         if boxes:
-            res = self._run(["sudo", "-n", boxes, "net", "down", name], timeout=60)
+            short = self._short_id(name)
+            res = self._run(["sudo", "-n", boxes, "net", "down", short], timeout=60)
         path.unlink(missing_ok=True)
         return res
 

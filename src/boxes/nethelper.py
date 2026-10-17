@@ -49,6 +49,11 @@ def _validate(
 ) -> tuple[int, str, str, str]:
     if not NAME_RE.match(name):
         raise NetError(f"invalid machine id {name!r}")
+    if len(name) > 9:
+        raise NetError(
+            f"machine id {name!r} is too long; interface names are limited to 15 "
+            f"characters (br-/tap-/veth- prefixes)"
+        )
     pid = int(attacker_pid)
     if pid <= 0 or not Path(f"/proc/{pid}").exists():
         raise NetError(f"attacker pid {pid} does not exist")
@@ -117,6 +122,8 @@ def down(name: str) -> dict:
         raise NetError("must run as root; use `sudo boxes net down ...`")
     if not NAME_RE.match(name):
         raise NetError(f"invalid machine id {name!r}")
+    if len(name) > 9:
+        raise NetError(f"machine id {name!r} is too long for interface names")
     for dev in (f"tap-{name}", f"veth-{name}", f"br-{name}"):
         _try(["ip", "link", "del", dev])
     return {"machine": name, "removed": True}
