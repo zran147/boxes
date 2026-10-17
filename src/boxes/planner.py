@@ -9,7 +9,7 @@ phases:
 * **root phase** -- exactly ``to_root`` further steps, the last tagged
   ``yields: [root]``.
 
-``net.port`` preconditions are *free*: since nmap is a prelude and not a step,
+``open_port`` preconditions are *free*: since nmap is a prelude and not a step,
 a recipe requiring a port implicitly asserts that the machine exposes it. The
 union of required ports becomes the machine's service inventory (the thing the
 builder will install, and the thing we cap for coherence).
@@ -27,7 +27,7 @@ TARGET = "target"
 MAX_ATTEMPTS = 2000
 MAX_BINDINGS = 64
 
-PRELUDE = {"net.port", "os", "host"}
+PRELUDE = {"open_port", "os", "host"}
 
 
 @dataclass
@@ -65,7 +65,7 @@ class Plan:
         out: set[int] = set()
         for s in self.steps:
             for f in [*s.requires, *s.provides]:
-                if f.pred == "net.port" and len(f.args) == 2 and isinstance(f.args[1], int):
+                if f.pred == "open_port" and len(f.args) == 2 and isinstance(f.args[1], int):
                     out.add(f.args[1])
         return sorted(out)
 
@@ -77,8 +77,8 @@ def initial_state(os_name: str) -> list[Fact]:
 def _candidate_facts(pat: Fact, state: list[Fact]) -> list[Fact]:
     """Facts in ``state`` that could satisfy ``pat`` (incl. assumed ports)."""
     out = [f for f in state if unify_fact(pat, f, {}) is not None]
-    if pat.pred == "net.port" and len(pat.args) == 2:
-        assumed = Fact("net.port", (TARGET, pat.args[1]))
+    if pat.pred == "open_port" and len(pat.args) == 2:
+        assumed = Fact("open_port", (TARGET, pat.args[1]))
         if assumed not in state and unify_fact(pat, assumed, {}) is not None:
             out.append(assumed)
     return out
@@ -113,7 +113,7 @@ def _applications(recipe: Recipe, state: list[Fact], rng: random.Random, instanc
         new: list[Fact] = [subst_fact(f, s) for f in provs]
         # assert the ports this recipe needs, so the inventory is complete
         for req in reqs:
-            if req.pred == "net.port":
+            if req.pred == "open_port":
                 new.append(subst_fact(req, s))
         merged = list(state)
         for f in new:
@@ -226,8 +226,8 @@ def satisfies(plan: Plan) -> bool:
                     break
             if matched is None:
                 # ports are assumed free
-                if req.pred == "net.port" and len(req.args) == 2:
-                    assumed = Fact("net.port", (TARGET, req.args[1]))
+                if req.pred == "open_port" and len(req.args) == 2:
+                    assumed = Fact("open_port", (TARGET, req.args[1]))
                     ns = unify_fact(req, assumed, subst)
                     if ns is None:
                         return False

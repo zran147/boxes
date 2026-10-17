@@ -9,7 +9,7 @@ provision: ./provision.sh
 poc: ./poc.sh
 yields: ["user"]
 requires:
-  - net.port($h, 22)
+  - open_port($h, 22)
   - creds($u, $p)
 provides:
   - access_shell($u)

@@ -11,8 +11,8 @@ requires:
   - service_access(ftp, $u, $p)
 provides:
   - creds($ssh_user, $ssh_pass)
-  - creds($ssh_user)
-  - creds($ssh_pass)
+  - creds.uname($ssh_user)
+  - creds.pass($ssh_pass)
 params:
   ssh_user:
     type: choice

@@ -8,11 +8,11 @@ fidelity: container
 provision: ./provision.sh
 poc: ./poc.sh
 requires:
-  - net.port($h, 80)
+  - open_port($h, 80)
 provides:
   - creds($leak_user, $leak_pass)
-  - creds($leak_user)
-  - creds($leak_pass)
+  - creds.uname($leak_user)
+  - creds.pass($leak_pass)
 params:
   leak_user:
     type: choice

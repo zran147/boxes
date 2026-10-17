@@ -150,9 +150,14 @@ def vars_in(f: Fact) -> set[str]:
 SIGNATURES: dict[str, tuple[str, ...]] = {
     "os": ("name",),
     "host": ("name",),
-    "net.port": ("host", "port"),
+    "open_port": ("host", "port"),
     "service_access": ("service", "user", "secret"),
+    # Username+password pair. Dotted subtypes describe other credential shapes:
+    # creds.uname, creds.pass, and later creds.auth_header, creds.cookies,
+    # creds.ntlmv1, ...
     "creds": ("user", "password"),
+    "creds.uname": ("user",),
+    "creds.pass": ("password",),
     "knows": ("what", "value"),
     "access_shell": ("user",),
     "access_root": (),
@@ -162,7 +167,6 @@ SIGNATURES: dict[str, tuple[str, ...]] = {
 # service_access(ftp, user), service_access(ftp, user, secret)).
 MIN_ARITY: dict[str, int] = {
     "service_access": 1,
-    "creds": 1,
 }
 
 

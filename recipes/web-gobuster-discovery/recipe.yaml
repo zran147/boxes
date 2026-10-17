@@ -8,7 +8,7 @@ fidelity: container
 provision: ./provision.sh
 poc: ./poc.sh
 requires:
-  - net.port($h, 80)
+  - open_port($h, 80)
 provides:
   - knows(path, $path)
 params:

@@ -16,7 +16,7 @@ description: "TODO: what this discovery step uncovers."
 os: [{os}]
 difficulty: {difficulty}
 requires:
-  - net.port($h, 80)
+  - open_port($h, 80)
 provides:
   - knows(path, $value)
 params:
@@ -35,7 +35,7 @@ description: "TODO: how access to the service is obtained."
 os: [{os}]
 difficulty: {difficulty}
 requires:
-  - net.port($h, 21)
+  - open_port($h, 21)
 provides:
   - service_access($service)
 params:
@@ -54,11 +54,11 @@ description: "TODO: where the credentials are found."
 os: [{os}]
 difficulty: {difficulty}
 requires:
-  - net.port($h, 80)
+  - open_port($h, 80)
 provides:
   - creds($user, $pass)
-  - creds($user)
-  - creds($pass)
+  - creds.uname($user)
+  - creds.pass($pass)
 params:
   user:
     type: choice
@@ -78,7 +78,7 @@ os: [{os}]
 difficulty: {difficulty}
 yields: ["user"]
 requires:
-  - net.port($h, 22)
+  - open_port($h, 22)
 provides:
   - access_shell($user)
 params:

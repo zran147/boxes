@@ -5,7 +5,7 @@ from __future__ import annotations
 from .facts import vars_in
 from .recipe import Recipe
 
-PRELUDE_PREDS = {"net.port", "os", "host"}
+PRELUDE_PREDS = {"open_port", "os", "host"}
 
 
 def lint(recipes: list[Recipe]) -> list[str]:

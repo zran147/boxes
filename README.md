@@ -11,18 +11,17 @@ their PoCs to prove them (see "P1 fast path" below). Full-fidelity VMs are P2.
 
 ## Concepts
 
-- **Fact** — a typed atom describing world state, e.g. `net.port(target, 22)`,
+- **Fact** — a typed atom describing world state, e.g. `open_port(target, 22)`,
   `creds(deploy, hunter2)`, `access_shell(deploy)`. Predicate arities are
   declared in `facts.SIGNATURES`; this is the *typed context*.
-- **Credentials** — `creds(user, password)` is a pair, `creds(user)` /
-  `creds(password)` are partials. `service_access(service)` is a capability;
+- **Credentials** — `creds(user, password)` is the username+password pair.
+  Dotted subtypes describe other shapes: `creds.uname(user)`,
+  `creds.pass(password)`, and later `creds.auth_header`, `creds.cookies`,
+  `creds.ntlmv1`, ... `service_access(service)` is a capability;
   `service_access(service, user, secret)` carries the credentials used. Recipes
   that find creds normally provide the pair *and* both partials, so a consumer
   can use whichever it needs (at least one provided fact must be consumed for
-  the step to count as part of the chain). Note: arity-1 `creds(x)` does not
-  record whether `x` is a user or a password; current recipes only consume the
-  pair, and the "creds found in different places" flow will need a tagged
-  partial form.
+  the step to count as part of the chain).
 - **Recipe** — an operator: `requires` (preconditions), `provides` (effects),
   randomizable `params`, and a `walkthrough` template. A recipe is a *template*;
   its params are grounded per-machine.
@@ -32,7 +31,7 @@ their PoCs to prove them (see "P1 fast path" below). Full-fidelity VMs are P2.
   produced from a seed. The manifest is what guarantees a password leaked in one
   step is exactly the one consumed by a later step.
 - **Prelude** — things that are free and not steps: `nmap` (which reveals
-  `net.port` facts) and the OS/host facts.
+  `open_port` facts) and the OS/host facts.
 
 ### Recipe kinds
 

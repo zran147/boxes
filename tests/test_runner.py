@@ -52,7 +52,7 @@ def fixture(**ctx) -> Fixture:
 def test_env_keys_are_sanitised():
     r = Recipe(
         id="r", version="1.0.0", kind="discovery", os=["ubuntu-*"], difficulty=0.1,
-        requires=[parse_fact("net.port($h, 80)")], provides=[parse_fact("knows(a, $v)")],
+        requires=[parse_fact("open_port($h, 80)")], provides=[parse_fact("knows(a, $v)")],
         yields=[], params={}, walkthrough="",
     )
     env = build_env(r, {"a.b": "x", "u": "deploy"}, "ubuntu-22.04")

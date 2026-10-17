@@ -8,12 +8,12 @@ fidelity: container
 provision: ./provision.sh
 poc: ./poc.sh
 requires:
-  - net.port($h, 80)
+  - open_port($h, 80)
   - knows(path, $path)
 provides:
   - creds($admin_user, $admin_pass)
-  - creds($admin_user)
-  - creds($admin_pass)
+  - creds.uname($admin_user)
+  - creds.pass($admin_pass)
 params:
   admin_user:
     type: choice

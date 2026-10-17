@@ -8,7 +8,7 @@ fidelity: container
 provision: ./provision.sh
 poc: ./poc.sh
 requires:
-  - net.port($h, 21)
+  - open_port($h, 21)
 provides:
   - service_access(ftp, $ftp_user, $ftp_pass)
 params:

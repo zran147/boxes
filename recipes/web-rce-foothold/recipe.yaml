@@ -9,7 +9,7 @@ provision: ./provision.sh
 poc: ./poc.sh
 yields: ["user"]
 requires:
-  - net.port($h, 8080)
+  - open_port($h, 8080)
 provides:
   - access_shell($web_user)
 params:

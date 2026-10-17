@@ -14,7 +14,7 @@ def _mk(**kw):
         kind="discovery",
         os=["ubuntu-*"],
         difficulty=0.1,
-        requires=[parse_fact("net.port($h, 80)")],
+        requires=[parse_fact("open_port($h, 80)")],
         provides=[parse_fact("knows(a, $v)")],
         yields=[],
         params={"v": ParamSpec("v", "choice", ["x"])},
@@ -47,7 +47,7 @@ def test_shortcut_privesc_rejected():
     r = _mk(
         kind="privesc",
         yields=["root"],
-        requires=[parse_fact("net.port($h, 22)")],
+        requires=[parse_fact("open_port($h, 22)")],
         provides=[parse_fact("access_root()")],
         params={},
     )
@@ -60,7 +60,7 @@ def test_foothold_with_network_rce_is_allowed():
     r = _mk(
         kind="foothold",
         yields=["user"],
-        requires=[parse_fact("net.port($h, 8080)")],
+        requires=[parse_fact("open_port($h, 8080)")],
         provides=[parse_fact("access_shell($u)")],
         params={"u": ParamSpec("u", "choice", ["www-data"])},
     )
