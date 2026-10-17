@@ -47,6 +47,10 @@ class DockerBackend:
     def image_exists(self, tag: str) -> bool:
         return self._run(["image", "inspect", tag], timeout=30).ok
 
+    def image_id(self, tag: str) -> str:
+        res = self._run(["image", "inspect", "--format", "{{.Id}}", tag], timeout=30)
+        return res.stdout.strip() if res.ok else tag
+
     def build_image(self, tag: str, context: str) -> ExecResult:
         return self._run(["build", "-t", tag, context], timeout=900)
 

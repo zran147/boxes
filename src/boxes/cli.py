@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import random
 import sys
 from pathlib import Path
@@ -11,17 +12,19 @@ from pathlib import Path
 import yaml
 
 from .backends import get_backend
+from .cache import Cache, machine_key
 from .harness import check_recipe
-from .images import ensure_image, image_tag
+from .images import PROJECT_ROOT, ensure_image, image_tag
 from .lint import lint
 from .manifest import materialize
 from .planner import generate, satisfies
 from .registry import load_registry, select
-from .runner import verify_machine, verify_recipe
+from .runner import verify_machine, verify_recipes
 from .scaffold import create_recipe
 from .writeup import plan_to_dict, render_markdown
 
 DEFAULT_RECIPES = Path("recipes")
+CACHE_FILE = PROJECT_ROOT / ".boxes-cache" / "verifications.json"
 
 
 def cmd_gen(args) -> int:
@@ -137,6 +140,9 @@ def cmd_new(args) -> int:
 
 
 def _print_verify(result) -> None:
+    if result.cached:
+        print(f"\n=== {result.label}: CACHED ===")
+        return
     print(f"\n=== {result.label}: {'OK' if result.ok else 'FAIL'} ===")
     if result.error:
         print(f"  error: {result.error}")
@@ -148,6 +154,14 @@ def _print_verify(result) -> None:
                 print(f"      {line}")
     if result.container and result.kept:
         print(f"  container kept: {result.container}")
+
+
+def _make_cache(args) -> Cache:
+    cache = Cache(CACHE_FILE, enabled=not args.no_cache)
+    if args.clear_cache:
+        cache.clear()
+        print("verification cache cleared")
+    return cache
 
 
 def _prepare_backend(args):
@@ -175,6 +189,9 @@ def cmd_verify(args) -> int:
     backend = _prepare_backend(args)
     if backend is None:
         return 2
+    image = image_tag(args.os)
+    image_id = backend.image_id(image)
+    cache = _make_cache(args)
 
     if args.machine:
         recipes = load_registry(args.recipes)
@@ -190,8 +207,16 @@ def cmd_verify(args) -> int:
         manifest = materialize(plan, build_seed)
         print(f"plan seed={args.seed} build seed={build_seed}")
         print("chain: " + " -> ".join(s.recipe.id for s in plan.steps))
-        result = verify_machine(plan, manifest, backend, image_tag(args.os), keep=args.keep)
+
+        key = machine_key(plan, manifest, image_id, backend.fidelity)
+        if cache.get(key) is not None:
+            print("machine already verified (cache hit)")
+            return 0
+
+        result = verify_machine(plan, manifest, backend, image, keep=args.keep)
         _print_verify(result)
+        if result.ok:
+            cache.put(key, {"plan_seed": plan.seed, "build_seed": build_seed})
         return 0 if result.ok else 1
 
     recipes = load_registry(args.recipes)
@@ -206,8 +231,8 @@ def cmd_verify(args) -> int:
         print("give --recipe <id>, --all, or --machine", file=sys.stderr)
         return 2
 
-    failed = 0
-    ran = 0
+    pairs = []
+    failures = 0
     for r in targets:
         if not r.verifiable:
             print(f"SKIP {r.id} (symbolic only: no provision/poc)")
@@ -215,18 +240,31 @@ def cmd_verify(args) -> int:
         fixture = check_recipe(r, args.seed).fixture
         if fixture is None:
             print(f"FAIL {r.id}: harness produced no fixture", file=sys.stderr)
-            failed += 1
+            failures += 1
             continue
-        result = verify_recipe(r, fixture, backend, image_tag(args.os), keep=args.keep)
-        _print_verify(result)
-        ran += 1
-        failed += 0 if result.ok else 1
+        pairs.append((r, fixture))
 
-    if ran == 0:
+    if not pairs:
         print("no verifiable recipes", file=sys.stderr)
         return 1
-    print(f"\n{ran - failed}/{ran} recipe(s) verified")
-    return 0 if failed == 0 else 1
+
+    results = verify_recipes(
+        pairs,
+        backend,
+        image,
+        image_id=image_id,
+        jobs=args.jobs,
+        cache=cache,
+        keep=args.keep,
+    )
+    for result in results:
+        _print_verify(result)
+
+    failures += sum(0 if r.ok else 1 for r in results)
+    cached = sum(1 for r in results if r.cached)
+    suffix = f" ({cached} cached)" if cached else ""
+    print(f"\n{len(results) - failures}/{len(results)} recipe(s) verified{suffix}")
+    return 0 if failures == 0 else 1
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -286,6 +324,12 @@ def build_parser() -> argparse.ArgumentParser:
     v.add_argument("--os", default="ubuntu-22.04")
     v.add_argument("--backend", default="docker", choices=["docker"])
     v.add_argument("--keep", action="store_true", help="keep the container for debugging")
+    v.add_argument("--jobs", type=int, default=min(4, os.cpu_count() or 1),
+                   help="parallel containers when verifying --all")
+    v.add_argument("--no-cache", action="store_true", dest="no_cache",
+                   help="ignore and do not write the verification cache")
+    v.add_argument("--clear-cache", action="store_true", dest="clear_cache",
+                   help="clear the verification cache before running")
     v.set_defaults(func=cmd_verify)
 
     return p

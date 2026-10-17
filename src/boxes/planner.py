@@ -183,31 +183,51 @@ def generate(
     return None
 
 
-def _consumes(prev_provides: list[Fact], cur_requires: list[Fact]) -> bool:
-    for f in prev_provides:
-        if f.pred in PRELUDE:
-            continue
-        for req in cur_requires:
-            if req.pred in PRELUDE:
-                continue
-            if unify_fact(f, req, {}) is not None:
-                return True
-    return False
+def _effective_provides(step: Step) -> set[Fact]:
+    return {
+        subst_fact(f, step.subst) for f in step.provides if f.pred not in PRELUDE
+    }
+
+
+def _effective_requires(step: Step) -> set[Fact]:
+    return {
+        subst_fact(f, step.subst) for f in step.requires if f.pred not in PRELUDE
+    }
 
 
 def is_relevant(plan: Plan) -> bool:
-    """True if the plan is a *causal chain*.
+    """True if every step lies on a dependency path to a flag.
 
-    Every step must consume at least one fact the previous step produced (ports
-    and OS facts are the free prelude and don't count). This is what stops the
-    generator from padding depth with pointless discovery steps or with redundant
-    parallel paths -- if a requested depth has no real chain, generation fails
-    instead of emitting filler.
+    Edges are built from *actual* fact sharing (after each step's substitution),
+    not mere unifiability, so a redundant producer whose fact nobody really
+    consumed is not counted as an ancestor. Adjacency is not required: a plan
+    may fan out from one step and merge later, as long as no step is a dead end.
     """
-    for i in range(1, len(plan.steps)):
-        if not _consumes(plan.steps[i - 1].provides, plan.steps[i].requires):
-            return False
-    return True
+    steps = plan.steps
+    if not steps:
+        return False
+    goals = {i for i, s in enumerate(steps) if s.recipe.yields}
+    if not goals:
+        return False
+
+    producers: list[list[int]] = [[] for _ in steps]
+    for i, step in enumerate(steps):
+        provided = _effective_provides(step)
+        if not provided:
+            continue
+        for j in range(i + 1, len(steps)):
+            if provided & _effective_requires(steps[j]):
+                producers[j].append(i)
+
+    seen = set(goals)
+    stack = list(goals)
+    while stack:
+        j = stack.pop()
+        for i in producers[j]:
+            if i not in seen:
+                seen.add(i)
+                stack.append(i)
+    return len(seen) == len(steps)
 
 
 def satisfies(plan: Plan) -> bool:

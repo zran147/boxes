@@ -34,6 +34,9 @@ class FakeBackend:
     def image_exists(self, tag: str) -> bool:
         return tag in self.images
 
+    def image_id(self, tag: str) -> str:
+        return f"fake-id:{tag}"
+
     def build_image(self, tag: str, context: str) -> ExecResult:
         self.calls.append(("build_image", tag, context))
         self.images.add(tag)

@@ -51,10 +51,12 @@ just a difference in `requires`, which the planner handles automatically.
 
 1. **Doability by construction** — a plan only exists if every precondition was
    met earlier, so a generated machine is doable by definition.
-2. **Causal chain** — every step must consume something the previous step
-   produced. This is what stops the generator from padding depth with pointless
-   discovery steps or redundant parallel paths: if a requested depth has no real
-   chain, generation fails instead of emitting filler.
+2. **Causal connectivity** — every step must lie on a dependency path to a
+   flag, using *actual* fact sharing (not mere unifiability). Steps may fan out
+   and merge later, but a dead-end branch or a redundant producer is rejected.
+   This is what stops the generator from padding depth with filler: if a
+   requested depth has no real dependency structure, generation fails instead of
+   emitting pointless steps.
 
 ## Flows it can build today
 
@@ -191,6 +193,32 @@ All shipped recipes are verifiable, including the FTP → leaked creds → SSH
 foothold chain and the web discovery → admin creds → SSH chain. The base image
 carries `vsftpd`, `openssh-server`, `openssh-client` and `sshpass` for them.
 
+### Verification cache and parallelism
+
+`verify` keys each result on the content of everything that can change it: the
+recipe directory (yaml, scripts, assets), the grounded fixture/manifest values,
+the base image **ID** (not just its tag), and the backend fidelity. A hit skips
+the container entirely. Only successes are stored, so failures always retry.
+The cache lives in `.boxes-cache/` (gitignored).
+
+```bash
+PYTHONPATH=src python3 -m boxes verify --all --jobs 4       # parallel, cold
+PYTHONPATH=src python3 -m boxes verify --all                # cache hits
+PYTHONPATH=src python3 -m boxes verify --all --no-cache     # force re-run
+PYTHONPATH=src python3 -m boxes verify --all --clear-cache  # wipe first
+```
+
+`--jobs` parallelizes independent recipe containers. Chain verification is
+sequential because every step depends on the previous ones. Timings here:
+10 recipes cold with 4 jobs ≈ 4 s; warm cache ≈ 0.3 s.
+
+### Recipe assets
+
+Put files in `recipes/<id>/files/` (or set `assets: ./dir`); they are copied to
+`/opt/boxes/<id>/` in the target before provisioning, and `BOX_ASSETS` points
+there. Use it for compiled PoCs, configs, templates or payloads that are not
+practical to inline in a shell script.
+
 ### Recipe verification contract
 
 A verifiable recipe declares a provision script and a PoC script:
@@ -223,9 +251,9 @@ the backend — a `fidelity: vm` recipe is never tested in a container.
 | Stage | Scope | Status |
 |-------|-------|--------|
 | **P0** — symbolic generation | Facts + unification, typed predicates, recipes, bounded-length planner, `open_port` prelude, causal-chain constraint, two-seed manifest, lint, `boxes new` scaffold, per-recipe harness | **Done** |
-| **P1** — container fast path | Pluggable backend (Docker + fake), base image, `provision`/`poc` contract, L2 minimal repro, L3 full-chain verification, real FTP/SSH/web/SUID/sudo recipes | **Done** |
+| **P1** — container fast path | Pluggable backend (Docker + fake), base image, `provision`/`poc` contract, recipe assets, L2 minimal repro, L3 full-chain verification, content-addressed verification cache, parallel `--jobs`, real FTP/SSH/web/SUID/sudo recipes | **Done** |
 | **P2** — fidelity + branching | QEMU backend for `fidelity: vm` (kernel/boot-level recipes), snapshots, multiple paths per flag (DAG instead of a chain), separate-place credentials (`creds.uname` + `creds.pass` consumed independently) | **Next** |
-| **P3** — coherence + scale | Difficulty budgets, themes, typed choices (value sets constrained by what provision/PoC support), more distros, per-recipe verification caching and parallel runs | Planned |
+| **P3** — coherence + scale | Difficulty budgets, themes, typed choices (value sets constrained by what provision/PoC support), more distros, PoCs run from a separate attacker container over a private network instead of loopback | Planned |
 | **P4** — registry | Recipe registry API + client, signed recipes, sandboxed recipe execution, per-recipe CI | Planned |
 
 P1 delivered L3/manifest/flags earlier than originally planned, and swapped the

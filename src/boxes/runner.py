@@ -16,10 +16,12 @@ the grounded values in the environment as ``BOX_<KEY>`` (e.g. ``BOX_U``,
 from __future__ import annotations
 
 import re
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from uuid import uuid4
 
 from .backends.base import Backend, ExecResult
+from .cache import Cache, recipe_key
 from .manifest import Manifest
 from .planner import Plan
 from .recipe import Recipe
@@ -46,6 +48,7 @@ class VerifyResult:
     container: str | None = None
     error: str | None = None
     kept: bool = False
+    cached: bool = False
 
     def add(self, step: StepResult) -> None:
         self.steps.append(step)
@@ -67,6 +70,7 @@ def build_env(recipe: Recipe, ctx: dict, os_name: str) -> dict[str, str]:
     # reserved keys always win over a recipe param with the same name
     env["BOX_RECIPE"] = recipe.id
     env["BOX_OS"] = os_name
+    env["BOX_ASSETS"] = f"/opt/boxes/{recipe.id}"
     return env
 
 
@@ -125,6 +129,16 @@ def _to_step(recipe: Recipe, phase: str, res: ExecResult, actor: str | None = No
     )
 
 
+def _copy_assets(backend: Backend, container: str, recipe: Recipe) -> ExecResult:
+    if not recipe.assets:
+        return ExecResult(0, "", "")
+    dest = f"/opt/boxes/{recipe.id}"
+    mk = backend.exec(container, f"mkdir -p '{dest}'", user=None, timeout=30)
+    if not mk.ok:
+        return mk
+    return backend.put(container, f"{recipe.assets_dir}/.", dest)
+
+
 def _create(backend: Backend, container: str, image: str) -> str | None:
     res = backend.create(container, image)
     if res.ok:
@@ -164,6 +178,8 @@ def verify_recipe(
     try:
         ctx = dict(fixture.context)
         ctx.setdefault("os", fixture.os)
+        assets = _copy_assets(backend, container, recipe)
+        result.add(_to_step(recipe, "assets", assets))
         prov = _run_script(
             backend, container, recipe, "provision", ctx, fixture.os, None, PROVISION_TIMEOUT
         )
@@ -227,6 +243,8 @@ def verify_machine(
             ctx = dict(manifest.step_context(step))
             ctx.setdefault("os", plan.os_name)
             contexts.append(ctx)
+            assets = _copy_assets(backend, container, step.recipe)
+            result.add(_to_step(step.recipe, "assets", assets))
             res = _run_script(
                 backend, container, step.recipe, "provision", ctx, plan.os_name, None, PROVISION_TIMEOUT
             )
@@ -247,3 +265,51 @@ def verify_machine(
         if not keep:
             backend.destroy(container)
     return result
+
+
+def verify_recipes(
+    pairs: list[tuple[Recipe, object]],
+    backend: Backend,
+    image: str,
+    image_id: str = "",
+    jobs: int = 1,
+    cache: Cache | None = None,
+    keep: bool = False,
+) -> list[VerifyResult]:
+    """Verify several recipes, using the cache and up to ``jobs`` containers.
+
+    Results are returned in input order regardless of completion order.
+    """
+    fidelity = _backend_fidelity(backend)
+    items = [
+        (recipe, fixture, recipe_key(recipe, fixture.context, image_id, fidelity))
+        for recipe, fixture in pairs
+    ]
+
+    results: list[VerifyResult | None] = [None] * len(items)
+    todo: list[int] = []
+    for index, (recipe, fixture, key) in enumerate(items):
+        hit = cache.get(key) if cache else None
+        if hit is not None:
+            results[index] = VerifyResult(label=recipe.id, ok=True, cached=True)
+        else:
+            todo.append(index)
+
+    def run(index: int) -> VerifyResult:
+        recipe, fixture, _ = items[index]
+        return verify_recipe(recipe, fixture, backend, image, keep=keep)
+
+    if jobs <= 1:
+        for index in todo:
+            results[index] = run(index)
+    elif todo:
+        with ThreadPoolExecutor(max_workers=jobs) as pool:
+            for index, result in zip(todo, pool.map(run, todo)):
+                results[index] = result
+
+    for index in todo:
+        result = results[index]
+        if cache is not None and result is not None and result.ok:
+            cache.put(items[index][2], {"recipe": items[index][0].id})
+
+    return [r for r in results if r is not None]

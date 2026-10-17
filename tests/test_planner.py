@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from boxes.facts import parse_fact
 from boxes.manifest import materialize
 from boxes.planner import generate, is_relevant, satisfies
 from boxes.registry import load_registry, select
@@ -112,6 +113,59 @@ def test_satisfies_backtracks_over_credential_choices():
 
     # Alice matches the pair first but has no username fact; only Bob is consistent.
     assert satisfies(Plan("ubuntu-22.04", [step_a, step_b], 0))
+
+
+def test_is_relevant_allows_fan_out_and_merge():
+    """Two parallel branches from one step, merged at the goal, are valid."""
+    from boxes.planner import Plan, Step
+    from boxes.recipe import Recipe
+
+    def step(rid, requires, provides, yields=()):
+        r = Recipe(
+            id=rid, version="1.0.0", kind="privesc", os=["ubuntu-*"], difficulty=0.1,
+            requires=[parse_fact(x) for x in requires],
+            provides=[parse_fact(x) for x in provides],
+            yields=list(yields), params={}, walkthrough="",
+        )
+        return Step(r, f"{rid}#0", {}, r.requires, r.provides, [])
+
+    plan = Plan(
+        "ubuntu-22.04",
+        [
+            step("a", ["open_port($h, 80)"], ["knows(a, 1)", "knows(b, 2)"]),
+            step("b", ["knows(a, 1)"], ["access_shell(alice)"]),
+            step("c", ["knows(b, 2)"], ["creds(alice, pw)"]),
+            step("d", ["access_shell(alice)", "creds(alice, pw)"], ["access_root()"], ["root"]),
+        ],
+        0,
+    )
+    # steps b and c do not share anything, so the old adjacent-only rule failed
+    assert is_relevant(plan)
+
+
+def test_is_relevant_rejects_dead_end_branch():
+    from boxes.planner import Plan, Step
+    from boxes.recipe import Recipe
+
+    def step(rid, requires, provides, yields=()):
+        r = Recipe(
+            id=rid, version="1.0.0", kind="privesc", os=["ubuntu-*"], difficulty=0.1,
+            requires=[parse_fact(x) for x in requires],
+            provides=[parse_fact(x) for x in provides],
+            yields=list(yields), params={}, walkthrough="",
+        )
+        return Step(r, f"{rid}#0", {}, r.requires, r.provides, [])
+
+    plan = Plan(
+        "ubuntu-22.04",
+        [
+            step("a", ["open_port($h, 80)"], ["knows(a, 1)", "knows(b, 2)"]),
+            step("dead", ["knows(a, 1)"], ["knows(c, 3)"]),
+            step("goal", ["knows(b, 2)"], ["access_root()"], ["root"]),
+        ],
+        0,
+    )
+    assert not is_relevant(plan)
 
 
 def test_single_step_rce_is_reachable_at_depth_one(pool):

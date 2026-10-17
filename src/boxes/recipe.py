@@ -46,6 +46,7 @@ class Recipe:
     poc: str | None = None  # script, run as the actor; exit 0 = proven
     actor: str | None = None  # "$var" resolved from context, default "attacker"
     poc_timeout: int = 120
+    assets: str | None = None  # directory copied to /opt/boxes/<id>/ in the target
     path: Path | None = None
 
     def applies_to(self, os_name: str) -> bool:
@@ -58,6 +59,10 @@ class Recipe:
         if self.path is None:
             raise ValueError(f"recipe {self.id} has no path; cannot resolve assets")
         return self.path.parent
+
+    @property
+    def assets_dir(self) -> Path | None:
+        return self.dir / self.assets if self.assets else None
 
     @property
     def verifiable(self) -> bool:
@@ -142,6 +147,12 @@ def load_recipe(path: Path) -> Recipe:
     if poc_timeout <= 0:
         raise ValueError(f"{rid}: poc_timeout must be positive, got {poc_timeout}")
 
+    assets = data.get("assets")
+    if assets is None and (base_dir / "files").is_dir():
+        assets = "./files"
+    if assets is not None and not (base_dir / str(assets)).is_dir():
+        raise ValueError(f"{rid}: assets directory not found: {base_dir / str(assets)}")
+
     return Recipe(
         id=rid,
         version=version,
@@ -158,6 +169,7 @@ def load_recipe(path: Path) -> Recipe:
         provision=str(provision) if provision else None,
         poc=str(poc) if poc else None,
         actor=str(data["actor"]) if data.get("actor") is not None else None,
-        poc_timeout=int(data.get("poc_timeout", 120)),
+        poc_timeout=poc_timeout,
+        assets=str(assets) if assets else None,
         path=path,
     )
