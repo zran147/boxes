@@ -9,26 +9,16 @@ SSH account was configured with.
 
 from __future__ import annotations
 
-import hashlib
 import random
 from dataclasses import dataclass
 
 from .facts import Fact, Var
 from .planner import Plan, Step
 from .recipe import ParamSpec
+from .seed import derive_seed
 
 _PW_CHARS = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 _TOKEN_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789"
-
-
-def derive_seed(build_seed: int, *parts: str) -> int:
-    """Deterministic sub-seed, independent of plan order.
-
-    Deriving per parameter (rather than drawing from one stream) means adding or
-    reordering recipes in a plan does not change the values of unrelated ones.
-    """
-    material = ":".join([str(build_seed), *parts]).encode()
-    return int.from_bytes(hashlib.sha256(material).digest()[:8], "big")
 
 
 class _UF:

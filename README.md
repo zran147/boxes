@@ -17,14 +17,13 @@ their PoCs to prove them (see "P1 fast path" below). Full-fidelity VMs are P2.
 - **Credentials** — `creds(user, password)` is the username+password pair.
   Dotted subtypes describe other shapes: `creds.uname(user)`,
   `creds.pass(password)`, and later `creds.auth_header`, `creds.cookies`,
-  `creds.ntlmv1`, ... P2 adds a **realm** to the partials
-  (`creds.uname($realm,$u)` / `creds.pass($realm,$p)`) so a username and a
-  password found in different places only combine when they share a validity
-  scope. `service_access(service)` is a capability;
+  `creds.ntlmv1`, ... `service_access(service)` is a capability;
   `service_access(service, user, secret)` carries the credentials used. Recipes
   that find creds normally provide the pair *and* both partials, so a consumer
   can use whichever it needs (at least one provided fact must be consumed for
-  the step to count as part of the chain).
+  the step to count as part of the chain). Credential reuse (trying
+  username×password combinations) and an AD-validity marker are future work; no
+  scoping/realm model is imposed today.
 - **Recipe** — an operator: `requires` (preconditions), `provides` (effects),
   randomizable `params`, and a `walkthrough` template. A recipe is a *template*;
   its params are grounded per-machine.
@@ -268,7 +267,7 @@ the backend — a `fidelity: vm` recipe is never tested in a container.
 |-------|-------|--------|
 | **P0** — symbolic generation | Facts + unification, typed predicates, recipes, bounded-length planner, `open_port` prelude, causal-chain constraint, two-seed manifest, lint, `boxes new` scaffold, per-recipe harness | **Done** |
 | **P1** — container fast path | Pluggable backend (Docker + fake), target + attacker images, per-machine internal network, shared attacker container, `provision`/`poc` contract (`context: target|attacker`), recipe assets, L2 minimal repro, L3 full-chain verification, content-addressed verification cache, parallel `--jobs`, real FTP/SSH/web/SUID/sudo recipes | **Done** |
-| **P2** — fidelity + branching | QEMU backend for `fidelity: vm` (kernel/boot-level recipes), snapshots, separate-place credentials with a realm (`creds.uname($realm,$u)` + `creds.pass($realm,$p)`), multiple paths per flag (DAG; experimental, gated behind `--multi-path`, and only after single-path is stable end-to-end) | **Next** |
+| **P2** — fidelity + branching | QEMU backend + snapshots (needs a KVM host); multiple independent paths per flag (`--multi-path`; shared-prefix DAG next) | **P2.3 done · P2.2 blocked** |
 | **P3** — coherence + scale | Difficulty budgets, themes, typed choices (value sets constrained by what provision/PoC support), more distros, a more complete attacker toolkit | Planned |
 | **P4** — registry | Recipe registry API + client, signed recipes, sandboxed recipe execution, per-recipe CI | Planned |
 
@@ -276,7 +275,12 @@ P1 delivered L3/manifest/flags earlier than originally planned, and swapped the
 QEMU-first build for a container fast path because this host has no nested virt
 (no `/dev/kvm`). QEMU remains the P2 backend for recipes that need a real kernel.
 
-Multi-path is deliberately disabled until the single-path flow is stable
-end-to-end. `--multi-path` is a reserved, experimental flag on `gen` and
-`verify --machine`; using it currently exits with an error and no multi-path
-code exists yet.
+Multi-path is experimental and requires `--multi-path N`. It currently
+generates and verifies N **independent** full paths, each on its own machine;
+shared-prefix DAG merging is the next step. `--multi-path` is only valid with
+`generate` and `verify --machine`.
+
+```bash
+PYTHONPATH=src python3 -m boxes gen --multi-path 2 --seed 42 --to-user 3 --to-root 2
+PYTHONPATH=src python3 -m boxes verify --machine --multi-path 2 --seed 42 --to-user 3 --to-root 2
+```

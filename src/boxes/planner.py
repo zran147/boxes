@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 
 from .facts import Fact, rename_fact, subst_fact, unify_fact
 from .recipe import Recipe
+from .seed import derive_seed
 
 TARGET = "target"
 MAX_ATTEMPTS = 2000
@@ -163,7 +164,6 @@ def generate(
 ) -> Plan | None:
     if to_user < 1 or to_root < 1:
         raise ValueError("to_user and to_root must both be >= 1")
-
     rng = random.Random(seed)
     for _ in range(MAX_ATTEMPTS):
         state = initial_state(os_name)
@@ -181,6 +181,41 @@ def generate(
         if is_relevant(plan):
             return plan
     return None
+
+
+def generate_paths(
+    recipes: list[Recipe],
+    os_name: str,
+    to_user: int,
+    to_root: int,
+    seed: int,
+    count: int,
+) -> list[Plan]:
+    """Generate up to ``count`` distinct paths to the flags.
+
+    This is the first multi-path slice: paths are independent full chains. A
+    shared-prefix DAG is the next refinement.
+    """
+    if count < 2:
+        raise ValueError("multi-path needs at least 2 paths")
+    paths: list[Plan] = []
+    seen: set[tuple[str, ...]] = set()
+    for index in range(count):
+        for attempt in range(50):
+            if index == 0 and attempt == 0:
+                path_seed = seed
+            else:
+                path_seed = derive_seed(seed, "path", str(index), str(attempt))
+            plan = generate(recipes, os_name, to_user, to_root, path_seed)
+            if plan is None:
+                continue
+            key = tuple(step.recipe.id for step in plan.steps)
+            if key in seen:
+                continue
+            seen.add(key)
+            paths.append(plan)
+            break
+    return paths
 
 
 def _effective_provides(step: Step) -> set[Fact]:

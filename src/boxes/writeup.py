@@ -18,6 +18,30 @@ def _render(template: str, ctx: dict) -> str:
     return _PLACEHOLDER.sub(sub, template)
 
 
+def _steps_markdown(plan: Plan, manifest: Manifest) -> list[str]:
+    lines: list[str] = []
+    for i, step in enumerate(plan.steps, 1):
+        r = step.recipe
+        idx = i - 1
+        if idx == plan.user_index:
+            tag = "  → **user flag**"
+        elif idx == plan.root_index:
+            tag = "  → **root flag**"
+        else:
+            tag = ""
+        lines.append(f"### Step {i} — `{r.id}` ({r.kind}){tag}")
+        lines.append(f"`v{r.version}` · difficulty `{r.difficulty}`")
+        lines.append("")
+        if r.description:
+            lines.append(r.description)
+            lines.append("")
+        body = _render(r.walkthrough, manifest.step_context(step)).strip()
+        if body:
+            lines.append(body)
+            lines.append("")
+    return lines
+
+
 def render_markdown(plan: Plan, manifest: Manifest) -> str:
     lines: list[str] = []
     lines.append(f"# Generated machine — {plan.os_name}")
@@ -28,26 +52,24 @@ def render_markdown(plan: Plan, manifest: Manifest) -> str:
     lines.append(f"- steps to user flag: {plan.user_index + 1}")
     lines.append(f"- steps to root flag: {plan.root_index - plan.user_index}")
     lines.append("")
+    lines.extend(_steps_markdown(plan, manifest))
+    return "\n".join(lines).rstrip() + "\n"
 
-    for i, step in enumerate(plan.steps, 1):
-        r = step.recipe
-        idx = i - 1
-        if idx == plan.user_index:
-            tag = "  → **user flag**"
-        elif idx == plan.root_index:
-            tag = "  → **root flag**"
-        else:
-            tag = ""
-        lines.append(f"## Step {i} — `{r.id}` ({r.kind}){tag}")
-        lines.append(f"`v{r.version}` · difficulty `{r.difficulty}`")
+
+def render_machine_markdown(paths: list[Plan], manifests: list[Manifest]) -> str:
+    first = paths[0]
+    lines: list[str] = []
+    lines.append(f"# Generated machine — {first.os_name}")
+    lines.append("")
+    lines.append(f"- base plan seed: `{first.seed}`")
+    lines.append(f"- build seed: `{manifests[0].build_seed}`")
+    lines.append(f"- paths: {len(paths)} (experimental)")
+    lines.append("")
+    for index, (plan, manifest) in enumerate(zip(paths, manifests), 1):
+        lines.append(f"## Path {index}")
+        lines.append(f"plan seed `{plan.seed}` · services {', '.join(str(p) for p in plan.ports)}")
         lines.append("")
-        if r.description:
-            lines.append(r.description)
-            lines.append("")
-        body = _render(r.walkthrough, manifest.step_context(step)).strip()
-        if body:
-            lines.append(body)
-            lines.append("")
+        lines.extend(_steps_markdown(plan, manifest))
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -79,4 +101,13 @@ def plan_to_dict(plan: Plan, manifest: Manifest) -> dict:
         "steps_to_root": plan.root_index - plan.user_index,
         "steps": steps,
         "manifest": {k: v for k, v in manifest.values.items()},
+    }
+
+
+def paths_to_dict(paths: list[Plan], manifests: list[Manifest]) -> dict:
+    return {
+        "os": paths[0].os_name,
+        "base_plan_seed": paths[0].seed,
+        "build_seed": manifests[0].build_seed,
+        "paths": [plan_to_dict(plan, manifest) for plan, manifest in zip(paths, manifests)],
     }

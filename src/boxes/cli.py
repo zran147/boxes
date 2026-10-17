@@ -17,24 +17,17 @@ from .harness import check_recipe
 from .images import PROJECT_ROOT, attacker_image, ensure_attacker_image, ensure_image, image_tag
 from .lint import lint
 from .manifest import materialize
-from .planner import generate, satisfies
+from .planner import generate, generate_paths, satisfies
 from .registry import load_registry, select
 from .runner import verify_machine, verify_recipes
 from .scaffold import create_recipe
-from .writeup import plan_to_dict, render_markdown
+from .writeup import paths_to_dict, plan_to_dict, render_machine_markdown, render_markdown
 
 DEFAULT_RECIPES = Path("recipes")
 CACHE_FILE = PROJECT_ROOT / ".boxes-cache" / "verifications.json"
 
 
 def cmd_gen(args) -> int:
-    if args.multi_path:
-        print(
-            "multi-path generation is experimental and not implemented yet; "
-            "the single-path flow must be stable end-to-end first",
-            file=sys.stderr,
-        )
-        return 2
     recipes = load_registry(args.recipes)
     errs = lint(recipes)
     if errs:
@@ -49,6 +42,34 @@ def cmd_gen(args) -> int:
         return 2
 
     seed = args.seed if args.seed is not None else random.randrange(1, 2**31)
+    build_seed = args.build_seed if args.build_seed is not None else random.randrange(1, 2**31)
+
+    if args.multi_path is not None:
+        if args.multi_path < 2:
+            print("--multi-path needs at least 2 paths", file=sys.stderr)
+            return 2
+        paths = generate_paths(
+            pool, args.os, args.to_user, args.to_root, seed, args.multi_path
+        )
+        if not paths:
+            print("could not generate any paths for those depths", file=sys.stderr)
+            return 1
+        if len(paths) < args.multi_path:
+            print(
+                f"note: only {len(paths)} distinct path(s) available",
+                file=sys.stderr,
+            )
+        for path in paths:
+            if not satisfies(path):
+                print("internal error: generated path does not satisfy itself", file=sys.stderr)
+                return 3
+        manifests = [materialize(path, build_seed) for path in paths]
+        if args.json:
+            print(json.dumps(paths_to_dict(paths, manifests), indent=2))
+        else:
+            print(render_machine_markdown(paths, manifests))
+        return 0
+
     plan = generate(pool, args.os, args.to_user, args.to_root, seed)
     if plan is None:
         print(
@@ -62,7 +83,6 @@ def cmd_gen(args) -> int:
         print("internal error: generated plan does not satisfy itself", file=sys.stderr)
         return 3
 
-    build_seed = args.build_seed if args.build_seed is not None else random.randrange(1, 2**31)
     manifest = materialize(plan, build_seed)
 
     if args.json:
@@ -200,13 +220,13 @@ def cmd_image(args) -> int:
 
 
 def cmd_verify(args) -> int:
-    if args.multi_path:
-        print(
-            "multi-path verification is experimental and not implemented yet; "
-            "the single-path flow must be stable end-to-end first",
-            file=sys.stderr,
-        )
-        return 2
+    if args.multi_path is not None:
+        if not args.machine:
+            print("--multi-path only applies to --machine", file=sys.stderr)
+            return 2
+        if args.multi_path < 2:
+            print("--multi-path needs at least 2 paths", file=sys.stderr)
+            return 2
     backend = _prepare_backend(args)
     if backend is None:
         return 2
@@ -217,6 +237,39 @@ def cmd_verify(args) -> int:
     if args.machine:
         recipes = load_registry(args.recipes)
         pool = select(recipes, args.os)
+        build_seed = args.build_seed if args.build_seed is not None else random.randrange(1, 2**31)
+
+        if args.multi_path is not None:
+            paths = generate_paths(
+                pool, args.os, args.to_user, args.to_root, args.seed, args.multi_path
+            )
+            if not paths:
+                print("could not generate any paths for those depths", file=sys.stderr)
+                return 1
+            if len(paths) < args.multi_path:
+                print(
+                    f"note: only {len(paths)} distinct path(s) available",
+                    file=sys.stderr,
+                )
+            manifests = [materialize(path, build_seed) for path in paths]
+            print(f"base plan seed={args.seed} build seed={build_seed} paths={len(paths)}")
+            ok = True
+            for index, (path, manifest) in enumerate(zip(paths, manifests), 1):
+                if not satisfies(path):
+                    print(f"internal error: path {index} does not satisfy itself", file=sys.stderr)
+                    return 3
+                print(f"path {index} (seed {path.seed}): " + " -> ".join(s.recipe.id for s in path.steps))
+                key = machine_key(path, manifest, image_id, backend.fidelity)
+                if cache.get(key) is not None:
+                    print(f"path {index} already verified (cache hit)")
+                    continue
+                result = verify_machine(path, manifest, backend, image, keep=args.keep)
+                _print_verify(result)
+                if result.ok:
+                    cache.put(key, {"plan_seed": path.seed, "build_seed": build_seed})
+                ok = ok and result.ok
+            return 0 if ok else 1
+
         plan = generate(pool, args.os, args.to_user, args.to_root, args.seed)
         if plan is None:
             print("could not generate a machine for those depths", file=sys.stderr)
@@ -224,7 +277,6 @@ def cmd_verify(args) -> int:
         if not satisfies(plan):
             print("internal error: generated plan does not satisfy itself", file=sys.stderr)
             return 3
-        build_seed = args.build_seed if args.build_seed is not None else random.randrange(1, 2**31)
         manifest = materialize(plan, build_seed)
         print(f"plan seed={args.seed} build seed={build_seed}")
         print("chain: " + " -> ".join(s.recipe.id for s in plan.steps))
@@ -301,8 +353,9 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--seed", type=int, default=None, help="plan/chain seed")
     g.add_argument("--build-seed", type=int, default=None, dest="build_seed",
                    help="param materialisation seed (defaults to random)")
-    g.add_argument("--multi-path", action="store_true", dest="multi_path",
-                   help="EXPERIMENTAL: multiple paths per flag (not implemented yet)")
+    g.add_argument("--multi-path", nargs="?", type=int, const=2, default=None,
+                   dest="multi_path",
+                   help="EXPERIMENTAL: generate N independent paths (default 2)")
     g.add_argument("--json", action="store_true")
     g.set_defaults(func=cmd_gen)
 
@@ -343,8 +396,9 @@ def build_parser() -> argparse.ArgumentParser:
     v.add_argument("--seed", type=int, default=0)
     v.add_argument("--build-seed", type=int, default=None, dest="build_seed",
                    help="param materialisation seed (defaults to --seed)")
-    v.add_argument("--multi-path", action="store_true", dest="multi_path",
-                   help="EXPERIMENTAL: multiple paths per flag (not implemented yet)")
+    v.add_argument("--multi-path", nargs="?", type=int, const=2, default=None,
+                   dest="multi_path",
+                   help="EXPERIMENTAL: verify N independent paths (default 2)")
     v.add_argument("--to-user", type=int, default=1, dest="to_user")
     v.add_argument("--to-root", type=int, default=1, dest="to_root")
     v.add_argument("--os", default="ubuntu-22.04")

@@ -6,7 +6,7 @@ import pytest
 
 from boxes.facts import parse_fact
 from boxes.manifest import materialize
-from boxes.planner import generate, is_relevant, satisfies
+from boxes.planner import generate, generate_paths, is_relevant, satisfies
 from boxes.registry import load_registry, select
 from boxes.writeup import plan_to_dict, render_markdown
 
@@ -173,3 +173,31 @@ def test_single_step_rce_is_reachable_at_depth_one(pool):
     assert plan is not None
     assert plan.steps[0].recipe.kind == "foothold"
     assert "user" in plan.steps[0].recipe.yields
+
+
+def test_generate_paths_returns_distinct_paths(pool):
+    paths = generate_paths(pool, OS, 3, 2, 0, 2)
+    assert len(paths) == 2
+    chains = {tuple(s.recipe.id for s in p.steps) for p in paths}
+    assert len(chains) == 2
+    for path in paths:
+        assert satisfies(path)
+        assert is_relevant(path)
+
+
+def test_generate_paths_returns_fewer_when_exhausted(pool):
+    # only one chain exists at this depth
+    paths = generate_paths(pool, OS, 1, 1, 0, 5)
+    assert len(paths) == 1
+
+
+def test_multi_path_writeup_and_json(pool):
+    from boxes.writeup import paths_to_dict, render_machine_markdown
+
+    paths = generate_paths(pool, OS, 3, 2, 0, 2)
+    manifests = [materialize(p, 1) for p in paths]
+    text = render_machine_markdown(paths, manifests)
+    assert "## Path 1" in text and "## Path 2" in text
+    data = paths_to_dict(paths, manifests)
+    assert len(data["paths"]) == 2
+    assert data["build_seed"] == manifests[0].build_seed
