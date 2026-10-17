@@ -28,6 +28,13 @@ CACHE_FILE = PROJECT_ROOT / ".boxes-cache" / "verifications.json"
 
 
 def cmd_gen(args) -> int:
+    if args.multi_path:
+        print(
+            "multi-path generation is experimental and not implemented yet; "
+            "the single-path flow must be stable end-to-end first",
+            file=sys.stderr,
+        )
+        return 2
     recipes = load_registry(args.recipes)
     errs = lint(recipes)
     if errs:
@@ -193,6 +200,13 @@ def cmd_image(args) -> int:
 
 
 def cmd_verify(args) -> int:
+    if args.multi_path:
+        print(
+            "multi-path verification is experimental and not implemented yet; "
+            "the single-path flow must be stable end-to-end first",
+            file=sys.stderr,
+        )
+        return 2
     backend = _prepare_backend(args)
     if backend is None:
         return 2
@@ -286,7 +300,9 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--to-root", type=int, default=2, dest="to_root")
     g.add_argument("--seed", type=int, default=None, help="plan/chain seed")
     g.add_argument("--build-seed", type=int, default=None, dest="build_seed",
-                   help="param materialisation seed (defaults to --seed)")
+                   help="param materialisation seed (defaults to random)")
+    g.add_argument("--multi-path", action="store_true", dest="multi_path",
+                   help="EXPERIMENTAL: multiple paths per flag (not implemented yet)")
     g.add_argument("--json", action="store_true")
     g.set_defaults(func=cmd_gen)
 
@@ -327,6 +343,8 @@ def build_parser() -> argparse.ArgumentParser:
     v.add_argument("--seed", type=int, default=0)
     v.add_argument("--build-seed", type=int, default=None, dest="build_seed",
                    help="param materialisation seed (defaults to --seed)")
+    v.add_argument("--multi-path", action="store_true", dest="multi_path",
+                   help="EXPERIMENTAL: multiple paths per flag (not implemented yet)")
     v.add_argument("--to-user", type=int, default=1, dest="to_user")
     v.add_argument("--to-root", type=int, default=1, dest="to_root")
     v.add_argument("--os", default="ubuntu-22.04")
