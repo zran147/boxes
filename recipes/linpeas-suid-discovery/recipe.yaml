@@ -4,6 +4,10 @@ kind: discovery
 description: Post-exploitation enumeration finds an unusual SUID binary.
 os: ["ubuntu-*", "debian-*"]
 difficulty: 0.3
+fidelity: container
+provision: ./provision.sh
+poc: ./poc.sh
+actor: $u
 requires:
   - access_shell($u)
 provides:
@@ -11,7 +15,7 @@ provides:
 params:
   binary:
     type: choice
-    values: ["nmap", "vim", "find", "bash", "less"]
+    values: ["find"]
 walkthrough: |
   With a shell as `{u}` we run local enumeration and notice an unusual SUID
   binary: `{binary}`. This is knowledge only — we still have to abuse it.

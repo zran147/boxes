@@ -10,11 +10,14 @@ from pathlib import Path
 
 import yaml
 
+from .backends import get_backend
 from .harness import check_recipe
+from .images import ensure_image, image_tag
 from .lint import lint
 from .manifest import materialize
 from .planner import generate, satisfies
 from .registry import load_registry, select
+from .runner import verify_machine, verify_recipe
 from .scaffold import create_recipe
 from .writeup import plan_to_dict, render_markdown
 
@@ -133,6 +136,95 @@ def cmd_new(args) -> int:
     return 0
 
 
+def _print_verify(result) -> None:
+    print(f"\n=== {result.label}: {'OK' if result.ok else 'FAIL'} ===")
+    if result.error:
+        print(f"  error: {result.error}")
+    for s in result.steps:
+        who = f" as {s.actor}" if s.actor else ""
+        print(f"  {s.phase:<9} {s.recipe:<28}{who}  {'OK' if s.ok else 'FAIL'}")
+        if not s.ok and s.output:
+            for line in s.output.splitlines():
+                print(f"      {line}")
+    if result.container and result.kept:
+        print(f"  container kept: {result.container}")
+
+
+def _prepare_backend(args):
+    backend = get_backend(args.backend)
+    if not backend.available():
+        print(f"backend {args.backend!r} is not available", file=sys.stderr)
+        return None
+    res = ensure_image(backend, args.os, getattr(args, "rebuild", False))
+    if not res.ok:
+        print(f"base image {image_tag(args.os)} is not ready:", file=sys.stderr)
+        print(res.output(), file=sys.stderr)
+        return None
+    return backend
+
+
+def cmd_image(args) -> int:
+    backend = _prepare_backend(args)
+    if backend is None:
+        return 2
+    print(f"base image ready: {image_tag(args.os)}")
+    return 0
+
+
+def cmd_verify(args) -> int:
+    backend = _prepare_backend(args)
+    if backend is None:
+        return 2
+
+    if args.machine:
+        recipes = load_registry(args.recipes)
+        pool = select(recipes, args.os)
+        plan = generate(pool, args.os, args.to_user, args.to_root, args.seed)
+        if plan is None:
+            print("could not generate a machine for those depths", file=sys.stderr)
+            return 1
+        rng = random.Random(args.seed ^ 0xB0_5E5)
+        manifest = materialize(plan, rng)
+        print("chain: " + " -> ".join(s.recipe.id for s in plan.steps))
+        result = verify_machine(plan, manifest, backend, image_tag(args.os), keep=args.keep)
+        _print_verify(result)
+        return 0 if result.ok else 1
+
+    recipes = load_registry(args.recipes)
+    if args.all:
+        targets = recipes
+    elif args.recipe:
+        targets = [r for r in recipes if r.id == args.recipe]
+        if not targets:
+            print(f"no such recipe: {args.recipe}", file=sys.stderr)
+            return 2
+    else:
+        print("give --recipe <id>, --all, or --machine", file=sys.stderr)
+        return 2
+
+    failed = 0
+    ran = 0
+    for r in targets:
+        if not r.verifiable:
+            print(f"SKIP {r.id} (symbolic only: no provision/poc)")
+            continue
+        fixture = check_recipe(r, args.seed).fixture
+        if fixture is None:
+            print(f"FAIL {r.id}: harness produced no fixture", file=sys.stderr)
+            failed += 1
+            continue
+        result = verify_recipe(r, fixture, backend, image_tag(args.os), keep=args.keep)
+        _print_verify(result)
+        ran += 1
+        failed += 0 if result.ok else 1
+
+    if ran == 0:
+        print("no verifiable recipes", file=sys.stderr)
+        return 1
+    print(f"\n{ran - failed}/{ran} recipe(s) verified")
+    return 0 if failed == 0 else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="boxes", description="HTB-style machine generator (P0)")
     p.add_argument("--recipes", default=str(DEFAULT_RECIPES), help="recipe directory")
@@ -167,6 +259,26 @@ def build_parser() -> argparse.ArgumentParser:
     n.add_argument("--difficulty", type=float, default=0.3)
     n.add_argument("--seed", type=int, default=0)
     n.set_defaults(func=cmd_new)
+
+    img = sub.add_parser("image", help="manage base images")
+    img_sub = img.add_subparsers(dest="image_command", required=True)
+    ib = img_sub.add_parser("build", help="build the base image")
+    ib.add_argument("--os", default="ubuntu-22.04")
+    ib.add_argument("--rebuild", action="store_true")
+    ib.add_argument("--backend", default="docker")
+    ib.set_defaults(func=cmd_image)
+
+    v = sub.add_parser("verify", help="build and verify recipes or a machine")
+    v.add_argument("--recipe", help="verify one recipe in isolation (L2)")
+    v.add_argument("--all", action="store_true", help="verify every verifiable recipe")
+    v.add_argument("--machine", action="store_true", help="build and verify a full chain (L3)")
+    v.add_argument("--seed", type=int, default=0)
+    v.add_argument("--to-user", type=int, default=1, dest="to_user")
+    v.add_argument("--to-root", type=int, default=1, dest="to_root")
+    v.add_argument("--os", default="ubuntu-22.04")
+    v.add_argument("--backend", default="docker")
+    v.add_argument("--keep", action="store_true", help="keep the container for debugging")
+    v.set_defaults(func=cmd_verify)
 
     return p
 

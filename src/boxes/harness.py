@@ -34,6 +34,7 @@ class Fixture:
     requires: list[str]
     provides: list[str]
     walkthrough: str
+    context: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -42,6 +43,7 @@ class Fixture:
             "params": self.params,
             "requires": self.requires,
             "provides": self.provides,
+            "context": self.context,
             "walkthrough": self.walkthrough,
         }
 
@@ -58,19 +60,15 @@ class Result:
         return not self.errors
 
 
-def _ground(term, params: dict):
-    """Ground a fact term from a recipe's params; unknown vars get a sentinel."""
+def _ground(term, ctx: dict):
+    """Ground a fact term from a recipe's concrete context."""
     if isinstance(term, Var):
-        if term.name == "h":
-            return TARGET
-        if term.name in params:
-            return params[term.name]
-        return f"<{term.name}>"
+        return ctx.get(term.name, f"fixture_{term.name}")
     return term
 
 
-def _ground_fact(f: Fact, params: dict) -> Fact:
-    return Fact(f.pred, tuple(_ground(a, params) for a in f.args))
+def _ground_fact(f: Fact, ctx: dict) -> Fact:
+    return Fact(f.pred, tuple(_ground(a, ctx) for a in f.args))
 
 
 def _resolve_provides(provides, subst: dict, rid: str, params: dict):
@@ -125,7 +123,18 @@ def check_recipe(recipe: Recipe, seed: int = 0) -> Result:
     result.errors.extend(lint([recipe]))
 
     params = {name: generate_param(spec, rng) for name, spec in recipe.params.items()}
-    grounded_requires = [_ground_fact(f, params) for f in recipe.requires]
+
+    # A complete concrete context for this recipe in isolation. Variables that
+    # would normally come from a sibling recipe are grounded to fixture_<name>,
+    # so provisioning and PoCs share one source of truth.
+    ctx = dict(params)
+    for f in [*recipe.requires, *recipe.provides]:
+        for a in f.args:
+            if isinstance(a, Var):
+                base = a.name
+                ctx.setdefault(base, TARGET if base == "h" else f"fixture_{base}")
+
+    grounded_requires = [_ground_fact(f, ctx) for f in recipe.requires]
     state = initial_state(SAMPLE_OS) + grounded_requires
 
     apps = list(_applications(recipe, state, rng))
@@ -141,19 +150,6 @@ def check_recipe(recipe: Recipe, seed: int = 0) -> Result:
         if f.pred not in SIGNATURES:
             result.errors.append(f"unknown predicate {f.pred!r}")
 
-    ctx = dict(params)
-    for f in [*recipe.requires, *recipe.provides]:
-        for a in f.args:
-            if isinstance(a, Var):
-                base = a.name
-                if base == "h":
-                    ctx.setdefault(base, TARGET)
-                elif base in params:
-                    ctx[base] = params[base]
-                else:
-                    # supplied by a sibling recipe at generation time; isolate
-                    # the walkthrough with a readable placeholder
-                    ctx.setdefault(base, f"<{base}>")
     text = _render(recipe.walkthrough, ctx)
     leftovers = _PLACEHOLDER.findall(text)
     if leftovers:
@@ -181,6 +177,7 @@ def check_recipe(recipe: Recipe, seed: int = 0) -> Result:
         requires=[str(f) for f in grounded_requires],
         provides=[str(f) for f in grounded_provides],
         walkthrough=text,
+        context=ctx,
     )
     return result
 

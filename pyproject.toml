@@ -20,3 +20,6 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "docker: integration tests that require a Docker daemon (opt in with BOXES_DOCKER_TESTS=1)",
+]

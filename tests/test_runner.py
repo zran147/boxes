@@ -1,0 +1,162 @@
+from dataclasses import dataclass
+
+from boxes.backends import FakeBackend
+from boxes.backends.base import ExecResult
+from boxes.facts import parse_fact
+from boxes.harness import Fixture
+from boxes.recipe import Recipe
+from boxes.runner import build_env, resolve_actor, verify_machine, verify_recipe
+
+
+def make_recipe(tmp_path, rid, *, actor=None, provision=True, poc=True, requires=None):
+    d = tmp_path / rid
+    d.mkdir()
+    prov = None
+    p = None
+    if provision:
+        (d / "provision.sh").write_text("echo provisioning\n")
+        prov = "provision.sh"
+    if poc:
+        (d / "poc.sh").write_text("echo proving\n")
+        p = "poc.sh"
+    return Recipe(
+        id=rid,
+        version="1.0.0",
+        kind="privesc",
+        os=["ubuntu-*"],
+        difficulty=0.2,
+        requires=requires or [parse_fact("access_shell($u)")],
+        provides=[parse_fact("access_root()")],
+        yields=["root"],
+        params={},
+        walkthrough="",
+        provision=prov,
+        poc=p,
+        actor=actor,
+        path=d / "recipe.yaml",
+    )
+
+
+def fixture(**ctx) -> Fixture:
+    return Fixture(
+        recipe_id="r",
+        os="ubuntu-22.04",
+        params={},
+        requires=[],
+        provides=[],
+        walkthrough="",
+        context={"os": "ubuntu-22.04", **ctx},
+    )
+
+
+def test_env_keys_are_sanitised():
+    r = Recipe(
+        id="r", version="1.0.0", kind="discovery", os=["ubuntu-*"], difficulty=0.1,
+        requires=[parse_fact("net.port($h, 80)")], provides=[parse_fact("knows(a, $v)")],
+        yields=[], params={}, walkthrough="",
+    )
+    env = build_env(r, {"a.b": "x", "u": "deploy"}, "ubuntu-22.04")
+    assert env["BOX_A_B"] == "x"
+    assert env["BOX_U"] == "deploy"
+    assert env["BOX_RECIPE"] == "r"
+    assert env["BOX_OS"] == "ubuntu-22.04"
+
+
+def test_actor_resolution():
+    rec = Recipe(
+        id="r", version="1.0.0", kind="privesc", os=["ubuntu-*"], difficulty=0.1,
+        requires=[parse_fact("access_shell($u)")], provides=[parse_fact("access_root()")],
+        yields=["root"], params={}, walkthrough="", actor="$u",
+    )
+    assert resolve_actor(rec, {"u": "deploy"}) == "deploy"
+    rec.actor = None
+    assert resolve_actor(rec, {}) == "attacker"
+
+
+def test_verify_recipe_provisions_as_root_then_pocs_as_actor(tmp_path):
+    rec = make_recipe(tmp_path, "sudo-ish", actor="$u")
+    backend = FakeBackend()
+
+    result = verify_recipe(rec, fixture(u="deploy"), backend, "img:test")
+
+    assert result.ok
+    execs = [c for c in backend.calls if c[0] == "exec"]
+    assert [e[3] for e in execs] == [None, "deploy"]  # provision as root, poc as actor
+    assert execs[0][4]["BOX_U"] == "deploy"
+    assert backend.destroyed == [result.container]
+
+
+def test_verify_recipe_tears_down_on_failure(tmp_path):
+    rec = make_recipe(tmp_path, "boom", actor="$u")
+
+    def responder(name, script, user, env):
+        return ExecResult(1, "", "nope") if "proving" in script else ExecResult(0, "", "")
+
+    backend = FakeBackend(responder=responder)
+    result = verify_recipe(rec, fixture(u="deploy"), backend, "img:test")
+
+    assert not result.ok
+    assert backend.destroyed == [result.container]
+    assert any(s.phase == "poc" and not s.ok for s in result.steps)
+
+
+def test_verify_recipe_refuses_symbolic_only(tmp_path):
+    rec = make_recipe(tmp_path, "symbolic", provision=False, poc=False)
+    backend = FakeBackend()
+    result = verify_recipe(rec, fixture(), backend, "img:test")
+    assert not result.ok
+    assert "provision/poc" in result.error
+    assert backend.calls == []
+
+
+@dataclass
+class _Step:
+    recipe: Recipe
+
+
+@dataclass
+class _Plan:
+    os_name: str
+    steps: list
+    seed: int
+
+
+class _Manifest:
+    def __init__(self, contexts):
+        self.contexts = contexts
+
+    def step_context(self, step):
+        return self.contexts[step.recipe.id]
+
+
+def test_verify_machine_provisions_all_then_runs_pocs_in_order(tmp_path):
+    r1 = make_recipe(tmp_path, "foothold-ish")
+    r1.yields = ["user"]
+    r2 = make_recipe(tmp_path, "privesc-ish", actor="$u")
+    plan = _Plan("ubuntu-22.04", [_Step(r1), _Step(r2)], seed=1)
+    manifest = _Manifest({"foothold-ish": {"u": "www-data"}, "privesc-ish": {"u": "www-data"}})
+    backend = FakeBackend()
+
+    result = verify_machine(plan, manifest, backend, "img:test")
+
+    assert result.ok
+    execs = [c for c in backend.calls if c[0] == "exec"]
+    assert len(execs) == 4
+    # all provisioning first, then all PoCs
+    assert all("provisioning" in e[2] for e in execs[:2])
+    assert all("proving" in e[2] for e in execs[2:])
+    assert [e[3] for e in execs] == [None, None, "attacker", "www-data"]
+    assert backend.destroyed == [result.container]
+
+
+def test_verify_machine_refuses_when_a_step_is_symbolic(tmp_path):
+    r1 = make_recipe(tmp_path, "ok")
+    r2 = make_recipe(tmp_path, "symbolic", provision=False, poc=False)
+    plan = _Plan("ubuntu-22.04", [_Step(r1), _Step(r2)], seed=1)
+    backend = FakeBackend()
+
+    result = verify_machine(plan, _Manifest({}), backend, "img:test")
+
+    assert not result.ok
+    assert "without provision/poc" in result.error
+    assert backend.calls == []

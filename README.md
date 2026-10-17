@@ -5,8 +5,9 @@ of steps to the user flag and a number of further steps to the root flag, and it
 generates a machine: a random-but-coherent chain of exploits, each drawn from a
 library of "recipes".
 
-**This is P0: plan-only.** It reasons about machines symbolically and prints a
-walkthrough. No VMs are built or verified yet (that's P1+).
+**P0 is plan-only.** It reasons about machines symbolically and prints a
+walkthrough. P1 adds a container fast path that provisions recipes and runs
+their PoCs to prove them (see "P1 fast path" below). Full-fidelity VMs are P2.
 
 ## Concepts
 
@@ -127,12 +128,65 @@ walkthrough: |
 `provides`, a flag yielded by the wrong kind, and flags reachable with no real
 work.
 
-## Not done yet (P1+)
+## P1 fast path: build + verify on containers
 
-- Build layer: QEMU + qcow2 overlays (or Incus/LXD for recipes that don't need a
-  custom kernel); provisioning over SSH; flags; snapshots.
-- Verification: L2 minimal-repro per recipe (cached, parallel) and L3 full-chain
-  runs; POСs run against the built VM.
+VMs need KVM (and this host has no nested virt), so the fast path runs recipes on
+**containers** behind a pluggable backend interface:
+
+- `backends/docker.py` — implemented, and what the CLI uses.
+- `backends/fake.py` — in-memory, for unit tests.
+- QEMU will implement the same interface later for kernel/boot-level recipes
+  (`fidelity: vm`).
+
+A base image is built once with network access; every machine container is then
+created with `--network none`, so recipes never get egress at verify time.
+
+```bash
+# one-time (or after changing the Dockerfile)
+PYTHONPATH=src python3 -m boxes image build --os ubuntu-22.04
+
+# L2: prove one recipe in isolation
+PYTHONPATH=src python3 -m boxes verify --recipe sudo-misconfig-privesc
+
+# L2: every verifiable recipe
+PYTHONPATH=src python3 -m boxes verify --all
+
+# L3: build a whole machine and run the full chain
+PYTHONPATH=src python3 -m boxes verify --machine --to-user 1 --to-root 2 --seed 1
+```
+
+### Recipe verification contract
+
+A verifiable recipe declares a provision script and a PoC script:
+
+```yaml
+fidelity: container          # container | vm
+provision: ./provision.sh    # runs as root; makes `requires` real
+poc: ./poc.sh                # runs as the actor; exit 0 = proven
+actor: $u                    # principal to run the PoC as (default: attacker)
+poc_timeout: 120
+```
+
+Both scripts receive the grounded context as environment variables
+(`BOX_U`, `BOX_BINARY`, `BOX_RECIPE`, `BOX_OS`, ...). The actor is resolved from
+that context, so the PoC runs as the principal the step claims to act as — e.g.
+the root step in a chain runs as the user the earlier foothold produced. That
+is how the chain proves *composability*, not just isolated steps.
+
+Scripts are arbitrary code. Today they run as root **inside** a
+`--network none` container with memory/CPU/PID limits, which is acceptable for
+trusted first-party recipes; a public registry must sandbox harder.
+
+`boxes verify --machine` requires every recipe in the chain to have
+provision+poc; otherwise it reports which ones are symbolic-only rather than
+silently skipping them.
+
+## Not done yet (P2+)
+
+- QEMU backend (`fidelity: vm`) for kernel/boot-level recipes; snapshots.
+- Make the symbolic recipes verifiable (FTP server, SSH foothold) and broaden
+  parameter value sets only where provisioning+PoC support every value.
+- Per-recipe verification caching (fixtures/content hashes) and parallel runs.
 - Difficulty budgets and themes for coherence; multiple paths per flag (DAG
   instead of a chain); more distros.
 - Registry API + signed recipes + sandboxed recipe execution.

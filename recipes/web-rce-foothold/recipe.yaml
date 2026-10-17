@@ -4,6 +4,9 @@ kind: foothold
 description: Unauthenticated RCE on the exposed web application yields a reverse shell.
 os: ["ubuntu-*", "debian-*"]
 difficulty: 0.5
+fidelity: container
+provision: ./provision.sh
+poc: ./poc.sh
 yields: ["user"]
 requires:
   - net.port($h, 8080)

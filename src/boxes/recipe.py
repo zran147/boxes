@@ -38,12 +38,36 @@ class Recipe:
     params: dict[str, ParamSpec]
     walkthrough: str
     description: str = ""
+    # --- P1 build/verify metadata -----------------------------------------
+    # "container" recipes can be realised by the fast path (Docker/Incus);
+    # "vm" recipes need a real kernel and are P1-vm territory.
+    fidelity: str = "container"
+    provision: str | None = None  # script, run as root inside the target
+    poc: str | None = None  # script, run as the actor; exit 0 = proven
+    actor: str | None = None  # "$var" resolved from context, default "attacker"
+    poc_timeout: int = 120
     path: Path | None = None
 
     def applies_to(self, os_name: str) -> bool:
         from fnmatch import fnmatch
 
         return any(fnmatch(os_name, pat) for pat in self.os)
+
+    @property
+    def dir(self) -> Path:
+        if self.path is None:
+            raise ValueError(f"recipe {self.id} has no path; cannot resolve assets")
+        return self.path.parent
+
+    @property
+    def verifiable(self) -> bool:
+        return self.provision is not None and self.poc is not None
+
+    def script(self, kind: str) -> Path:
+        rel = self.provision if kind == "provision" else self.poc
+        if rel is None:
+            raise ValueError(f"{self.id}: no {kind} script")
+        return self.dir / rel
 
     def param_vars(self) -> set[str]:
         return set(self.params)
@@ -103,6 +127,18 @@ def load_recipe(path: Path) -> Recipe:
             length=int(spec.get("length", 16)),
         )
 
+    base_dir = path.parent
+    fidelity = str(data.get("fidelity", "container"))
+    if fidelity not in {"container", "vm"}:
+        raise ValueError(f"{rid}: fidelity must be 'container' or 'vm', got {fidelity!r}")
+    provision = data.get("provision")
+    poc = data.get("poc")
+    for phase, rel in (("provision", provision), ("poc", poc)):
+        if rel is not None and not (base_dir / str(rel)).is_file():
+            raise ValueError(f"{rid}: {phase} script not found: {base_dir / str(rel)}")
+    if (provision is None) != (poc is None):
+        raise ValueError(f"{rid}: provision and poc must be provided together")
+
     return Recipe(
         id=rid,
         version=version,
@@ -115,5 +151,10 @@ def load_recipe(path: Path) -> Recipe:
         params=params,
         walkthrough=str(data.get("walkthrough", "")).strip(),
         description=str(data.get("description", "")).strip(),
+        fidelity=fidelity,
+        provision=str(provision) if provision else None,
+        poc=str(poc) if poc else None,
+        actor=str(data["actor"]) if data.get("actor") is not None else None,
+        poc_timeout=int(data.get("poc_timeout", 120)),
         path=path,
     )

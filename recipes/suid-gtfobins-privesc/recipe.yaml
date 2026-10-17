@@ -4,6 +4,10 @@ kind: privesc
 description: Abuse the discovered SUID binary (GTFOBins) to escalate to root.
 os: ["ubuntu-*", "debian-*"]
 difficulty: 0.4
+fidelity: container
+provision: ./provision.sh
+poc: ./poc.sh
+actor: $u
 yields: ["root"]
 requires:
   - access_shell($u)
