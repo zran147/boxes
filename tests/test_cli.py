@@ -19,3 +19,15 @@ def test_multi_path_generates_multiple_paths(capsys):
 def test_multi_path_requires_machine_on_verify(capsys):
     assert main(["verify", "--multi-path", "2", "--recipe", "x"]) == 2
     assert "only applies to --machine" in capsys.readouterr().err
+
+
+def test_qemu_rejects_an_unsupported_os(capsys):
+    rc = main(["verify", "--backend", "qemu", "--os", "ubuntu-24.04", "--recipe", "vm-kernel-probe"])
+    assert rc == 2
+    assert "only ubuntu-22.04" in capsys.readouterr().err
+
+
+def test_qemu_image_rejects_an_unsupported_os(capsys):
+    rc = main(["image", "build", "--backend", "qemu", "--os", "ubuntu-24.04"])
+    assert rc == 2
+    assert "only ubuntu-22.04" in capsys.readouterr().err

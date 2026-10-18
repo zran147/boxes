@@ -14,9 +14,9 @@ It works in three layers:
 3. **Check** — a plan is only emitted if every precondition was met earlier, and
    a recipe is only considered proven if its PoC exits 0.
 
-Status: **P0 and P1 done.** P2 is partial — QEMU, pre-baked VM bases and
-snapshots are working; multi-path emits independent paths (shared-prefix DAG is
-next); VM attacker-context PoCs need the `boxes net` helper.
+Status: **P0 and P1 done.** P2 is partial — QEMU, pre-baked VM bases,
+snapshots, the shared-prefix DAG, and the provisioning proxy are working.
+Remaining P2 work is KVM acceleration and more VM-only content.
 
 ## Concepts
 
@@ -81,13 +81,12 @@ Container recipes (all verified end-to-end):
 
 VM recipes (QEMU, TCG-verified):
 
-- `sudo-misconfig-privesc` — target-context sudo escalation; has both container
-  and VM PoCs.
 - `web-env-leak-creds` and `backup-creds` — credential leaks, container-verified
   and portable to the VM.
 - `ssh-creds-foothold` — SSH foothold with a provision that works on containers
   and VMs.
-- `sudo-misconfig-privesc` and `suid-find-privesc` — two root paths.
+- `sudo-misconfig-privesc` and `suid-find-privesc` — two root paths, verified in
+  containers and portable to the VM.
 - `vm-kernel-probe` — `poc.vm` smoke test (PID 1 is systemd, kernel boot image).
 - `package-probe` — provisioning-proxy smoke test.
 
@@ -131,9 +130,11 @@ boxes gen --multi-path 2 --seed 42 --to-user 3 --to-root 2
 boxes verify --machine --multi-path 2 --seed 42 --to-user 3 --to-root 2
 ```
 
-`--multi-path N` (default 2) produces N distinct paths. Today each path is
-verified on its own machine; shared-prefix DAG merging is next. It is only
-valid with `gen` and `verify --machine`.
+`--multi-path N` (default 2) produces N distinct paths that share their user
+phase. On QEMU the shared prefix is provisioned once (`savevm shared`), then
+each root branch is provisioned and the attacker is reset. On Docker each path
+is verified on its own fast container. It is only valid with `gen` and
+`verify --machine`.
 
 ## Recipe tooling
 
@@ -270,27 +271,34 @@ boxes verify --all --clear-cache  # wipe first
 
 `--jobs` parallelizes independent recipes. Chain verification is sequential
 because every step depends on the previous ones. Container timings on this host:
-11 recipes cold with 4 jobs ≈ 30 s (the package probe installs via the proxy);
-warm cache ≈ 0.3 s.
+13 recipes cold with 4 jobs ≈ 1–2 min (the package probe installs via the
+proxy); warm cache ≈ 0.3 s.
 
 ## VM backend (experimental)
 
-Prerequisites: `qemu-system-x86`, `cloud-image-utils`, `libguestfs-tools`, and a
-KVM-capable host for usable speed. TCG works, at roughly 1.5 minutes per boot.
-Pre-bake the base once (cloud-init is run once; subsequent boots skip it):
+Prerequisites: `qemu-system-x86`, `cloud-image-utils`, `libguestfs-tools`, and
+Docker (attacker-context VM PoCs use the Docker attacker container). KVM makes
+it fast; TCG works at roughly 1.5–2.5 minutes per boot. Pre-bake the base once
+(cloud-init is run once; subsequent boots skip it). This also builds the Docker
+attacker image:
 
 ```bash
 boxes image build --backend qemu --os ubuntu-22.04
 boxes verify --recipe sudo-misconfig-privesc --backend qemu
 ```
 
-Measured on a TCG-only host: pre-bake ≈ 4m36s, cold verify ≈ 1m48s, warm cache
-≈ 0.16s, `savevm` ≈ 2s, `loadvm` ≈ 7s.
+The cloud image download is resumable (`jammy-base.img.part`), so a failed or
+interrupted download continues on the next run.
+
+Measured on a TCG-only host: pre-bake ≈ 5–9 min depending on the cloud image
+download, cold verify ≈ 2 min, warm cache ≈ 0.2 s, `savevm` ≈ 2 s,
+`loadvm` ≈ 7 s.
 
 Snapshots (`savevm`/`loadvm`) let a provisioned VM be restored. VM verification
 takes a `pre-poc` snapshot after provisioning (and sealing), runs the PoCs, then
 `loadvm pre-poc` restores the provisioned state. Multi-path VM verification
-boots once: `savevm clean`, then for each path `loadvm clean` → provision →
+boots once: configure apt, `savevm clean`, provision the shared prefix,
+`savevm shared`, then for each branch `loadvm shared` → branch provision →
 `savevm pre-poc` → PoCs → `loadvm pre-poc`. For attacker-context paths the
 attacker container is recreated and a fresh veth is attached to the existing
 attack bridge before the branch is provisioned.
@@ -408,11 +416,13 @@ Pin a full apt snapshot with `--apt-snapshot`:
 boxes verify --recipe package-probe --apt-snapshot 20240101T000000Z
 ```
 
-The runner rewrites the distro sources to `snapshot.ubuntu.com` /
+The runner rewrites the distro sources to HTTPS on `snapshot.ubuntu.com` /
 `snapshot.debian.org`, refreshes the indexes, and keeps the pinned state for the
-rest of the machine (the cache key includes the date). After a host or Docker
-restart, run `boxes proxy up` again; slow TCG installs can be given more time
-with `BOXES_PROVISION_TIMEOUT` (seconds, default 1200).
+rest of the machine (the cache key includes the date). Snapshot hosts bypass
+apt-cacher-ng and go through squid: apt-cacher-ng mishandles the snapshot
+service's HTTP→HTTPS by-hash redirects. After a host or Docker restart, run
+`boxes proxy up` again; slow TCG installs can be given more time with
+`BOXES_PROVISION_TIMEOUT` (seconds, default 1200).
 
 The sudoers rule must allow the helper subcommands, hence `boxes net *`.
 

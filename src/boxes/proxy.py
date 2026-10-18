@@ -11,6 +11,7 @@ import json
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 from .backends.base import ExecResult
@@ -59,6 +60,23 @@ def is_up() -> bool:
     return link.ok
 
 
+def services_ok() -> bool:
+    """Check the proxy processes, not just the container."""
+    if not is_up():
+        return False
+    code = (
+        "import socket, sys\n"
+        "for port in (3128, 3142, 8000):\n"
+        "    sock = socket.socket()\n"
+        "    sock.settimeout(1)\n"
+        "    if sock.connect_ex(('127.0.0.1', port)) != 0:\n"
+        "        sys.exit(1)\n"
+    )
+    return _run(
+        ["docker", "exec", CONTAINER, "python3", "-c", code], timeout=20
+    ).ok
+
+
 def up(rebuild: bool = False) -> ExecResult:
     if not shutil.which("docker"):
         return ExecResult(1, "", "docker is not installed")
@@ -103,12 +121,17 @@ def up(rebuild: bool = False) -> ExecResult:
     if not res.ok:
         _run(["docker", "rm", "-f", CONTAINER])
         return res
+    for _ in range(20):
+        if services_ok():
+            break
+        time.sleep(0.5)
     return ExecResult(0, json.dumps({
         "container": CONTAINER,
         "network": NETWORK,
         "url": proxy_url(),
         "apt_proxy_url": apt_proxy_url(),
         "artifacts_url": artifacts_url(),
+        "healthy": services_ok(),
     }), "")
 
 
@@ -116,7 +139,7 @@ def down(clean: bool = False) -> ExecResult:
     pid = _run(["docker", "inspect", "-f", "{{.State.Pid}}", CONTAINER], timeout=30)
     boxes = os.environ.get("BOXES_BIN") or shutil.which("boxes")
     if pid.ok and pid.stdout.strip() and boxes:
-        _run(["sudo", "-n", boxes, "net", "provision-down", pid.stdout.strip()], timeout=60)
+        _run(["sudo", "-n", boxes, "net", "provision-down"], timeout=60)
     _run(["docker", "rm", "-f", CONTAINER], timeout=60)
     if clean:
         _run(["docker", "volume", "rm", "-f", CACHE_VOLUME], timeout=60)
@@ -125,8 +148,10 @@ def down(clean: bool = False) -> ExecResult:
 
 
 def status() -> dict:
+    up = is_up()
     return {
-        "running": is_up(),
+        "running": up,
+        "healthy": services_ok() if up else False,
         "container": CONTAINER,
         "network": NETWORK,
         "proxy_ip": PROXY_IP,

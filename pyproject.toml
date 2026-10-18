@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "boxes"
 version = "0.0.1"
-description = "Procedural generator for HTB-style vulnerable machines (P0: plan-only)"
+description = "Procedural generator for HTB-style vulnerable machines"
 requires-python = ">=3.11"
 dependencies = ["PyYAML>=6"]
 

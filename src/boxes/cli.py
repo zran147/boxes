@@ -31,7 +31,7 @@ from .planner import generate, generate_paths, satisfies
 from .registry import load_registry, select
 from .runner import verify_machine, verify_paths, verify_recipes
 from .scaffold import create_recipe
-from .vm_image import prepare_base
+from .vm_image import SUPPORTED_OS, prepare_base
 from .writeup import paths_to_dict, plan_to_dict, render_machine_markdown, render_markdown
 
 DEFAULT_RECIPES = Path("recipes")
@@ -216,6 +216,14 @@ def _prepare_backend(args):
             )
         return None
     if args.backend == "qemu":
+        # VM attacker-context PoCs use the Docker attacker image.
+        docker = get_backend("docker")
+        if docker.available():
+            res = ensure_attacker_image(docker, getattr(args, "rebuild", False))
+            if not res.ok:
+                print("attacker image is not ready:", file=sys.stderr)
+                print(res.output(), file=sys.stderr)
+                return None
         return backend
     rebuild = getattr(args, "rebuild", False)
     for tag, ensure in (
@@ -232,12 +240,32 @@ def _prepare_backend(args):
 
 def cmd_image(args) -> int:
     if args.backend == "qemu":
+        if args.os != SUPPORTED_OS:
+            print(
+                f"the VM base currently supports only {SUPPORTED_OS}, not {args.os}",
+                file=sys.stderr,
+            )
+            return 2
         res = prepare_base(PROJECT_ROOT / ".boxes-vm", rebuild=args.rebuild)
         if not res.ok:
             print("VM base image prep failed:", file=sys.stderr)
             print(res.output(), file=sys.stderr)
             return 1
         print(res.stdout.strip() or "VM base image ready")
+        docker = get_backend("docker")
+        if docker.available():
+            att = ensure_attacker_image(docker, args.rebuild)
+            if not att.ok:
+                print("attacker image build failed:", file=sys.stderr)
+                print(att.output(), file=sys.stderr)
+                return 1
+            print(att.stdout.strip() or "attacker image ready")
+        else:
+            print(
+                "note: Docker is unavailable; VM attacker-context PoCs need "
+                "boxes/attacker:latest",
+                file=sys.stderr,
+            )
         return 0
     backend = _prepare_backend(args)
     if backend is None:
@@ -254,14 +282,27 @@ def cmd_verify(args) -> int:
         if args.multi_path < 2:
             print("--multi-path needs at least 2 paths", file=sys.stderr)
             return 2
+    if args.backend == "qemu" and args.os != SUPPORTED_OS:
+        print(
+            f"the VM base currently supports only {SUPPORTED_OS}, not {args.os}",
+            file=sys.stderr,
+        )
+        return 2
+    from . import proxy as proxy_mod
+
+    if not proxy_mod.is_up():
+        print(
+            "warning: provisioning proxy is down; recipes that install packages "
+            "will fail (run `boxes proxy up`)",
+            file=sys.stderr,
+        )
     backend = _prepare_backend(args)
     if backend is None:
         return 2
     image = image_tag(args.os)
-    if args.backend == "qemu":
-        image_id = backend.image_id(image)
-    else:
-        image_id = f"{backend.image_id(image)}|{backend.image_id(attacker_image())}"
+    # QEMU targets use the VM base; attacker-context PoCs still use the Docker
+    # attacker image, so include it in the cache identity for both backends.
+    image_id = f"{backend.image_id(image)}|{backend.image_id(attacker_image())}"
     if args.apt_snapshot:
         image_id = f"{image_id}|apt-snapshot={args.apt_snapshot}"
     cache = _make_cache(args)
@@ -436,7 +477,7 @@ def cmd_proxy(args) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="boxes", description="HTB-style machine generator (P0)")
+    p = argparse.ArgumentParser(prog="boxes", description="HTB-style machine generator")
     p.add_argument("--recipes", default=str(DEFAULT_RECIPES), help="recipe directory")
     sub = p.add_subparsers(dest="command", required=True)
 

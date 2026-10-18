@@ -18,6 +18,7 @@ from .backends.base import ExecResult
 
 CLOUD_URL = "https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img"
 USER = "boxes"
+SUPPORTED_OS = "ubuntu-22.04"
 
 
 def _run(args: list[str], *, timeout: int = 120) -> ExecResult:
@@ -28,6 +29,21 @@ def _run(args: list[str], *, timeout: int = 120) -> ExecResult:
     except (OSError, subprocess.TimeoutExpired) as e:
         return ExecResult(1, "", str(e))
     return ExecResult(proc.returncode, proc.stdout, proc.stderr)
+
+
+def _valid_qcow2(path: Path) -> bool:
+    return _run(["qemu-img", "info", "-f", "qcow2", str(path)], timeout=30).ok
+
+
+def _kill_prep(pidfile: Path) -> None:
+    try:
+        pid = int(Path(pidfile).read_text().strip())
+    except (OSError, ValueError):
+        return
+    try:
+        os.kill(pid, 9)
+    except OSError:
+        pass
 
 
 def _free_port() -> int:
@@ -76,10 +92,25 @@ def prepare_base(store: Path, rebuild: bool = False, boot_timeout: int = 600) ->
             return res
 
     cloud = store / "jammy-base.img"
+    if cloud.is_file() and not _valid_qcow2(cloud):
+        cloud.unlink()
     if not cloud.is_file():
-        res = _run(["curl", "-L", "-sS", "-o", str(cloud), CLOUD_URL], timeout=1800)
-        if not res.ok:
-            return res
+        tmp = store / "jammy-base.img.part"
+        last = ExecResult(1, "", "download did not run")
+        for _ in range(4):
+            last = _run(
+                ["curl", "-fL", "-sS", "-C", "-", "-o", str(tmp), CLOUD_URL],
+                timeout=1800,
+            )
+            if last.ok:
+                break
+        if not last.ok:
+            # keep the partial file so a later run resumes instead of restarting
+            return last
+        if not _valid_qcow2(tmp):
+            tmp.unlink(missing_ok=True)
+            return ExecResult(1, "", "downloaded VM image is not a valid qcow2")
+        tmp.replace(cloud)
 
     pub = (store / "boxes_key.pub").read_text().strip()
     (store / "user-data").write_text(
@@ -142,6 +173,7 @@ def prepare_base(store: Path, rebuild: bool = False, boot_timeout: int = 600) ->
         return res
     if not _wait_ssh(port, key, boot_timeout):
         tail = log.read_text(errors="replace")[-1500:] if log.is_file() else ""
+        _kill_prep(pidfile)
         return ExecResult(1, "", f"prep VM did not boot\n{tail}")
 
     # wait for cloud-init, then shut down cleanly

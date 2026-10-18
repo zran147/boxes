@@ -310,13 +310,23 @@ def _configure_apt(backend: Backend, setup: _Setup, result: VerifyResult) -> Non
     """
     if not setup.provision or not setup.proxy_url or not setup.apt_proxy_url:
         return
+    config = [
+        f'Acquire::http::Proxy "{setup.apt_proxy_url}";',
+        f'Acquire::https::Proxy "{setup.proxy_url}";',
+    ]
+    if setup.apt_snapshot:
+        # snapshot.ubuntu.com redirects HTTP to HTTPS; apt-cacher-ng mishandles
+        # the by-hash files after that redirect, so send snapshot hosts to
+        # squid (which does CONNECT) and use HTTPS sources below.
+        for host in ("snapshot.ubuntu.com", "snapshot.debian.org"):
+            config.append(f'Acquire::http::Proxy::{host} "{setup.proxy_url}";')
+            config.append(f'Acquire::https::Proxy::{host} "{setup.proxy_url}";')
     script = (
         "set -eu\n"
         "mkdir -p /etc/apt/apt.conf.d\n"
         "cat > /etc/apt/apt.conf.d/01boxes <<'EOF'\n"
-        f'Acquire::http::Proxy "{setup.apt_proxy_url}";\n'
-        f'Acquire::https::Proxy "{setup.proxy_url}";\n'
-        "EOF\n"
+        + "\n".join(config)
+        + "\nEOF\n"
     )
     if setup.apt_snapshot:
         snap = setup.apt_snapshot
@@ -325,9 +335,9 @@ def _configure_apt(backend: Backend, setup: _Setup, result: VerifyResult) -> Non
             'case "$ID" in\n'
             "  ubuntu)\n"
             "    cat > /etc/apt/sources.list <<EOF\n"
-            f"deb http://snapshot.ubuntu.com/ubuntu/{snap}/ $VERSION_CODENAME main restricted universe multiverse\n"
-            f"deb http://snapshot.ubuntu.com/ubuntu/{snap}/ $VERSION_CODENAME-updates main restricted universe multiverse\n"
-            f"deb http://snapshot.ubuntu.com/ubuntu/{snap}/ $VERSION_CODENAME-security main restricted universe multiverse\n"
+            f"deb https://snapshot.ubuntu.com/ubuntu/{snap}/ $VERSION_CODENAME main restricted universe multiverse\n"
+            f"deb https://snapshot.ubuntu.com/ubuntu/{snap}/ $VERSION_CODENAME-updates main restricted universe multiverse\n"
+            f"deb https://snapshot.ubuntu.com/ubuntu/{snap}/ $VERSION_CODENAME-security main restricted universe multiverse\n"
             "EOF\n"
             "    ;;\n"
             "  debian)\n"
