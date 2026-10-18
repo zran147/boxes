@@ -29,7 +29,7 @@ from .cache import Cache, recipe_key
 from .images import attacker_image
 from .manifest import Manifest
 from .planner import Plan
-from .proxy import PROXY_IP, PROXY_PORT
+from .proxy import ARTIFACT_PORT, PROXY_IP, PROXY_PORT
 from . import proxy as proxy_mod
 from .recipe import Recipe
 
@@ -94,6 +94,8 @@ def build_env(
         env["HTTPS_PROXY"] = proxy_url
         env["no_proxy"] = "localhost,127.0.0.1"
         env["NO_PROXY"] = "localhost,127.0.0.1"
+        base = proxy_url.rsplit(":", 1)[0]
+        env["BOX_ARTIFACTS_URL"] = f"{base}:{ARTIFACT_PORT}"
     return env
 
 
@@ -142,10 +144,9 @@ def _run_script(
     timeout: int,
     host: str = "127.0.0.1",
     proxy_url: str | None = None,
-    fidelity: str | None = None,
 ) -> ExecResult:
     try:
-        script = recipe.script(phase, fidelity).read_text()
+        script = recipe.script(phase).read_text()
     except (OSError, ValueError) as e:
         return ExecResult(2, "", str(e))
     return backend.exec(
@@ -220,7 +221,8 @@ def _setup(
     proxy_url = None
     if proxy_up:
         proxy_url = (
-            f"http://{PROXY_IP}:{PROXY_PORT}" if vm else "http://boxes-proxy:3142"
+            f"http://{PROXY_IP}:{PROXY_PORT}" if vm
+            else f"http://boxes-proxy:{PROXY_PORT}"
         )
     setup = _Setup(
         target=_container_name("target", label),
@@ -296,7 +298,6 @@ def _poc(
     os_name: str,
     result: VerifyResult,
 ) -> None:
-    fidelity = _backend_fidelity(backend)
     if _attacker_for(recipe):
         extra = _copy_assets(setup.attacker_backend, setup.attacker, recipe)
         if not extra.ok:
@@ -311,7 +312,6 @@ def _poc(
             "attacker",
             recipe.poc_timeout,
             host=setup.host,
-            fidelity=fidelity,
         )
         result.add(_to_step(recipe, "poc", res, actor="attacker"))
         return
@@ -330,7 +330,6 @@ def _poc(
         actor,
         recipe.poc_timeout,
         host="127.0.0.1",
-        fidelity=fidelity,
     )
     result.add(_to_step(recipe, "poc", res, actor=actor))
 
@@ -350,8 +349,7 @@ def verify_recipe(
     if not recipe.supports(_backend_fidelity(backend)):
         result.ok = False
         result.error = (
-            f"recipe has no poc.vm/poc.container for the "
-            f"{_backend_fidelity(backend)} backend"
+            f"recipe has no PoC for the {_backend_fidelity(backend)} backend"
         )
         return result
 
@@ -414,7 +412,7 @@ def verify_machine(
         return result
 
     incompatible = [
-        f"{s.recipe.id} ({','.join(s.recipe.fidelities)})"
+        f"{s.recipe.id} ({s.recipe.poc_backend})"
         for s in plan.steps
         if not s.recipe.supports(_backend_fidelity(backend))
     ]
@@ -501,24 +499,51 @@ def verify_paths(
         failed.error = err
         return [failed for _ in paths]
 
-    results: list[VerifyResult] = []
+    prefix_len = _common_prefix(paths)
+    results = [VerifyResult(label=f"path seed={p.seed}") for p in paths]
     try:
         clean = backend.snapshot(setup.target, "clean")
         if not clean.ok:
-            for path in paths:
-                failed = VerifyResult(label=f"path seed={path.seed}")
-                failed.ok = False
-                failed.error = f"could not snapshot clean state: {clean.output()}"
-                results.append(failed)
+            for result in results:
+                result.ok = False
+                result.error = f"could not snapshot clean state: {clean.output()}"
+            return results
+
+        # provision the shared prefix once
+        if prefix_len:
+            prefix_manifest = manifests[0]
+            for step in paths[0].steps[:prefix_len]:
+                ctx = dict(prefix_manifest.step_context(step))
+                ctx.setdefault("os", paths[0].os_name)
+                assets = _copy_assets(backend, setup.target, step.recipe)
+                results[0].add(_to_step(step.recipe, "assets", assets))
+                res = _run_script(
+                    backend, setup.target, step.recipe, "provision", ctx,
+                    paths[0].os_name, None, PROVISION_TIMEOUT,
+                    proxy_url=setup.proxy_url,
+                )
+                results[0].add(_to_step(step.recipe, "provision", res))
+            if not results[0].ok:
+                for result in results:
+                    result.ok = False
+                    result.error = "shared prefix provisioning failed"
+                return results
+
+        shared = backend.snapshot(setup.target, "shared")
+        if not shared.ok:
+            for result in results:
+                result.ok = False
+                result.error = f"could not snapshot shared state: {shared.output()}"
             return results
 
         for index, (path, manifest) in enumerate(zip(paths, manifests), 1):
-            result = VerifyResult(label=f"path seed={path.seed}")
+            result = results[index - 1]
             if index > 1:
-                rest = backend.restore(setup.target, "clean")
-                result.add(StepResult("machine", "restore-clean", rest.ok, rest.exit_code, rest.output()))
+                rest = backend.restore(setup.target, "shared")
+                result.add(
+                    StepResult("machine", "restore-shared", rest.ok, rest.exit_code, rest.output())
+                )
                 if not rest.ok:
-                    results.append(result)
                     continue
                 if needs_attacker and setup.attacker is not None:
                     setup.attacker_backend.destroy(setup.attacker)
@@ -527,7 +552,6 @@ def verify_paths(
                     )
                     if err:
                         result.add(StepResult("machine", "attacker-reset", False, 1, err))
-                        results.append(result)
                         continue
                     pid = getattr(setup.attacker_backend, "pid", lambda _n: 0)(setup.attacker)
                     att = (
@@ -535,16 +559,15 @@ def verify_paths(
                         if hasattr(backend, "attach_attacker") and pid
                         else ExecResult(1, "", "backend cannot attach an attacker")
                     )
-                    result.add(StepResult("machine", "attacker-reset", att.ok, att.exit_code, att.output()))
+                    result.add(
+                        StepResult("machine", "attacker-reset", att.ok, att.exit_code, att.output())
+                    )
                     if not att.ok:
-                        results.append(result)
                         continue
 
-            contexts = []
-            for step in path.steps:
+            for step in path.steps[prefix_len:]:
                 ctx = dict(manifest.step_context(step))
                 ctx.setdefault("os", path.os_name)
-                contexts.append(ctx)
                 assets = _copy_assets(backend, setup.target, step.recipe)
                 result.add(_to_step(step.recipe, "assets", assets))
                 res = _run_script(
@@ -555,19 +578,34 @@ def verify_paths(
 
             if setup.provision and hasattr(backend, "seal"):
                 sealed = backend.seal(setup.target)
-                result.add(StepResult("machine", "seal", sealed.ok, sealed.exit_code, sealed.output()))
+                result.add(
+                    StepResult("machine", "seal", sealed.ok, sealed.exit_code, sealed.output())
+                )
 
             snap = backend.snapshot(setup.target, "pre-poc")
             result.add(StepResult("machine", "snapshot", snap.ok, snap.exit_code, snap.output()))
             if snap.ok:
-                for step, ctx in zip(path.steps, contexts):
+                for step in path.steps:
+                    ctx = dict(manifest.step_context(step))
+                    ctx.setdefault("os", path.os_name)
                     _poc(backend, setup, step.recipe, ctx, path.os_name, result)
                 rest = backend.restore(setup.target, "pre-poc")
-                result.add(StepResult("machine", "restore", rest.ok, rest.exit_code, rest.output()))
-            results.append(result)
+                result.add(
+                    StepResult("machine", "restore", rest.ok, rest.exit_code, rest.output())
+                )
     finally:
         _teardown(backend, setup, keep)
     return results
+
+
+def _common_prefix(paths: list[Plan]) -> int:
+    """Number of leading steps that are the same instances across all paths."""
+    length = 0
+    while all(len(path.steps) > length for path in paths):
+        if len({path.steps[length].instance for path in paths}) != 1:
+            break
+        length += 1
+    return length
 
 
 def verify_recipes(

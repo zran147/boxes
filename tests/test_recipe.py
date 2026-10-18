@@ -5,7 +5,7 @@ import pytest
 from boxes.recipe import load_recipe
 
 
-def _write(tmp_path: Path, poc_block: str):
+def _write(tmp_path: Path, poc_block: str, extra: str = ""):
     d = tmp_path / "r"
     d.mkdir()
     (d / "provision.sh").write_text("echo provision\n")
@@ -27,46 +27,51 @@ def _write(tmp_path: Path, poc_block: str):
         '    values: ["alice"]\n'
         "provision: ./provision.sh\n"
         f"{poc_block}\n"
+        f"{extra}\n"
         "walkthrough: |\n"
         "  hi\n"
     )
     return load_recipe(d / "recipe.yaml")
 
 
-def test_poc_mapping_with_context(tmp_path):
-    r = _write(tmp_path, "poc:\n  script: ./poc.sh\n  context: attacker")
+def test_container_poc(tmp_path):
+    r = _write(tmp_path, "poc:\n  context: attacker\n  container: ./poc.sh")
+    assert r.poc_backend == "container"
     assert r.poc == "./poc.sh"
-    assert r.poc_context == "attacker"
+    assert r.supports("container")
+    # a container PoC is a portable proxy and may also run on the VM product
+    assert r.supports("vm")
 
 
-def test_flat_poc_defaults_to_target_context(tmp_path):
-    r = _write(tmp_path, "poc: ./poc.sh")
-    assert r.poc_context == "target"
+def test_vm_poc_is_vm_only(tmp_path):
+    r = _write(tmp_path, "poc:\n  context: attacker\n  vm: ./poc.sh")
+    assert r.poc_backend == "vm"
+    assert r.supports("vm")
+    assert not r.supports("container")
 
 
-def test_invalid_poc_context_is_rejected(tmp_path):
+def test_two_poc_keys_are_rejected(tmp_path):
     with pytest.raises(ValueError):
-        _write(tmp_path, "poc:\n  script: ./poc.sh\n  context: moon")
+        _write(
+            tmp_path,
+            "poc:\n  context: attacker\n  container: ./poc.sh\n  vm: ./poc.sh",
+        )
 
 
-def test_poc_mapping_requires_script(tmp_path):
+def test_missing_poc_key_is_rejected(tmp_path):
     with pytest.raises(ValueError):
         _write(tmp_path, "poc:\n  context: attacker")
 
 
-def test_poc_variants_enable_both_backends(tmp_path):
-    r = _write(
-        tmp_path,
-        "poc:\n  context: attacker\n  container: ./poc.sh\n  vm: ./poc.sh",
-    )
-    assert r.supports("container")
-    assert r.supports("vm")
-    assert r.script("poc", "container").name == "poc.sh"
-    assert r.script("poc", "vm").name == "poc.sh"
+def test_fidelity_is_rejected(tmp_path):
+    with pytest.raises(ValueError):
+        _write(
+            tmp_path,
+            "poc:\n  context: attacker\n  container: ./poc.sh",
+            extra="fidelity: container",
+        )
 
 
-def test_vm_only_poc_does_not_support_container(tmp_path):
-    r = _write(tmp_path, "poc:\n  context: attacker\n  vm: ./poc.sh")
-    assert r.supports("vm")
-    assert not r.supports("container")
-    assert r.script("poc", "vm").name == "poc.sh"
+def test_invalid_poc_context_is_rejected(tmp_path):
+    with pytest.raises(ValueError):
+        _write(tmp_path, "poc:\n  container: ./poc.sh\n  context: moon")

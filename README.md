@@ -83,11 +83,12 @@ VM recipes (QEMU, TCG-verified):
 
 - `sudo-misconfig-privesc` — target-context sudo escalation; has both container
   and VM PoCs.
-- `vm-env-leak-creds` / `vm-backup-creds` — two independent VM credential leaks.
-- `vm-ssh-foothold` — attacker-context SSH foothold over a tap network.
-- `sudo-misconfig-privesc` — target-context sudo escalation; container and VM
-  PoCs.
-- `package-probe` — provisioning-proxy smoke test on both backends.
+- `web-env-leak-creds` and `backup-creds` — credential leaks, container-verified
+  and portable to the VM.
+- `ssh-creds-foothold` — SSH foothold with a provision that works on containers
+  and VMs.
+- `sudo-misconfig-privesc` and `suid-find-privesc` — two root paths.
+- `package-probe` — provisioning-proxy smoke test.
 
 Multi-path (`--multi-path N`) generates and verifies N independent full paths.
 
@@ -335,7 +336,7 @@ sudo -n /usr/local/bin/boxes net down testrule   # {"machine": "testrule", "remo
 Then:
 
 ```bash
-boxes verify --recipe vm-ssh-foothold --backend qemu --no-cache
+boxes verify --recipe ssh-creds-foothold --backend qemu --no-cache
 ```
 
 `boxes net up <id> --attacker-pid <pid> --user <user>` creates `br-<id>`,
@@ -376,24 +377,29 @@ boxes proxy down
 boxes proxy clean     # also remove the cache volume
 ```
 
-`boxes proxy up` builds `boxes/proxy` (apt-cacher-ng), starts `boxes-proxy` on
-the `boxes-provision` Docker network, and attaches it to `br-provision` at
-`10.67.0.2`. Provisioning receives:
+`boxes proxy up` builds `boxes/proxy` (squid plus a static artifact server),
+starts `boxes-proxy` on the `boxes-provision` Docker network, and attaches it to
+`br-provision` at `10.67.0.2`. Provisioning receives:
 
-- `BOX_PROXY_URL` and `http_proxy`/`https_proxy` pointing at
-  `http://10.67.0.2:3142`;
+- `BOX_PROXY_URL` plus `http_proxy`/`https_proxy` at
+  `http://10.67.0.2:3128` (or `http://boxes-proxy:3128` for containers);
+- `BOX_ARTIFACTS_URL` at `http://10.67.0.2:8000` (or
+  `http://boxes-proxy:8000`);
 - a provision NIC (`10.67.0.x`) on `br-provision`, configured by the backend;
 - a `seal` step after provisioning that brings that NIC down.
 
 The VM's management NIC uses QEMU `restrict=on`, so SSH hostfwd still works but
-the guest has no route to the host or internet. During provisioning, apt goes
-to the proxy; after the seal, only the host-only attack network remains.
+the guest has no route to the host or internet. During provisioning, apt and pip
+go to the proxy; after the seal, only the host-only attack network remains.
 
-The proxy cache is a persistent Docker volume (`boxes-proxy-cache`). It covers
-apt today; pip/artifact proxying and pinned snapshot dates are the next step.
-After a host or Docker restart, run `boxes proxy up` again: the cache volume
-survives, but the `br-provision` veth has to be reattached. Slow TCG apt installs
-can be given more time with `BOXES_PROVISION_TIMEOUT` (seconds, default 1200).
+The proxy keeps an **in-memory** HTTP cache; HTTPS (pip) is tunneled via
+CONNECT and not cached. The durable/pinned path is the **artifact store**:
+`.boxes-cache/artifacts` is served at `:8000`, and recipes fetch pinned files
+from `$BOX_ARTIFACTS_URL`. An origin allowlist limits traffic to
+Ubuntu/Debian/PyPI/GitHub. Pin package versions or snapshot dates in recipes for
+reproducibility. A robust disk cache is future work. After a host or Docker
+restart, run `boxes proxy up` again; slow TCG installs can be given more time
+with `BOXES_PROVISION_TIMEOUT` (seconds, default 1200).
 
 The sudoers rule must allow the helper subcommands, hence `boxes net *`.
 
@@ -403,6 +409,6 @@ The sudoers rule must allow the helper subcommands, hence `boxes net *`.
 |-------|-------|--------|
 | **P0** — symbolic generation | Facts + unification, typed predicates, recipes, bounded-length planner, `open_port` prelude, causal connectivity, two-seed manifest, lint, scaffold, per-recipe harness | **Done** |
 | **P1** — container fast path | Pluggable backend, target + attacker images, internal network, shared attacker container, provision/poc contract, assets, L2 + L3 verification, content-addressed cache, parallel jobs, real recipes | **Done** |
-| **P2** — fidelity + branching | QEMU + prebaked base + snapshots; `poc.container`/`poc.vm` per recipe; pre-PoC snapshot/restore; one-VM multi-path with attacker reset (`clean` + `pre-poc` snapshots); provisioning proxy on `br-provision` with egress-only phase and seal; shared-prefix DAG next | **Partial** |
+| **P2** — fidelity + branching | QEMU + prebaked base + snapshots; one PoC per recipe (`poc.container` XOR `poc.vm`); pre-PoC snapshot/restore; shared-prefix DAG with one-VM verification and attacker reset; provisioning proxy (squid + artifact store, apt/pip/artifacts) with egress-only phase and seal; pinned snapshot dates and a durable cache next | **Partial** |
 | **P3** — coherence + scale | Difficulty budgets, themes, typed choices, more distros, a complete attacker toolkit | Planned |
 | **P4** — registry | Recipe registry API + client, signed recipes, sandboxed execution, per-recipe CI | Planned |

@@ -21,7 +21,9 @@ CONTAINER = "boxes-proxy"
 NETWORK = "boxes-provision"
 CACHE_VOLUME = "boxes-proxy-cache"
 PROXY_IP = "10.67.0.2"
-PROXY_PORT = 3142
+PROXY_PORT = 3128
+ARTIFACT_PORT = 8000
+ARTIFACTS_DIR = PROJECT_ROOT / ".boxes-cache" / "artifacts"
 IMAGE_CONTEXT = PROJECT_ROOT / "images" / "proxy"
 
 
@@ -37,6 +39,10 @@ def _run(args: list[str], timeout: int = 180) -> ExecResult:
 
 def proxy_url() -> str:
     return f"http://{PROXY_IP}:{PROXY_PORT}"
+
+
+def artifacts_url() -> str:
+    return f"http://{PROXY_IP}:{ARTIFACT_PORT}"
 
 
 def is_up() -> bool:
@@ -63,13 +69,15 @@ def up(rebuild: bool = False) -> ExecResult:
             return res
 
     _run(["docker", "rm", "-f", CONTAINER], timeout=60)
+    ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
     res = _run(
         [
             "docker", "run", "-d",
             "--name", CONTAINER,
             "--network", NETWORK,
             "--network-alias", "boxes-proxy",
-            "-v", f"{CACHE_VOLUME}:/var/cache/apt-cacher-ng",
+            "-v", f"{CACHE_VOLUME}:/var/spool/squid",
+            "-v", f"{ARTIFACTS_DIR}:/srv/artifacts",
             IMAGE,
         ],
         timeout=180,
@@ -90,7 +98,12 @@ def up(rebuild: bool = False) -> ExecResult:
     if not res.ok:
         _run(["docker", "rm", "-f", CONTAINER])
         return res
-    return ExecResult(0, json.dumps({"container": CONTAINER, "network": NETWORK, "url": proxy_url()}), "")
+    return ExecResult(0, json.dumps({
+        "container": CONTAINER,
+        "network": NETWORK,
+        "url": proxy_url(),
+        "artifacts_url": artifacts_url(),
+    }), "")
 
 
 def down(clean: bool = False) -> ExecResult:
@@ -101,6 +114,7 @@ def down(clean: bool = False) -> ExecResult:
     _run(["docker", "rm", "-f", CONTAINER], timeout=60)
     if clean:
         _run(["docker", "volume", "rm", "-f", CACHE_VOLUME], timeout=60)
+        shutil.rmtree(ARTIFACTS_DIR, ignore_errors=True)
     return ExecResult(0, "", "")
 
 
@@ -111,5 +125,7 @@ def status() -> dict:
         "network": NETWORK,
         "proxy_ip": PROXY_IP,
         "url": proxy_url(),
+        "artifacts_url": artifacts_url(),
         "cache_volume": CACHE_VOLUME,
+        "artifacts_dir": str(ARTIFACTS_DIR),
     }

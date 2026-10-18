@@ -1,13 +1,13 @@
-id: vm-backup-creds
+id: backup-creds
 version: 1.0.0
 kind: creds
-description: "A backup service on the VM leaks SSH credentials."
+description: "A backup service leaks SSH credentials."
 os: ["ubuntu-*"]
 difficulty: 0.2
 provision: ./provision.sh
 poc:
   context: attacker
-  vm: ./poc.sh
+  container: ./poc.sh
 requires:
   - open_port($h, 8080)
 provides:

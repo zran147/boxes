@@ -161,23 +161,39 @@ def generate(
     to_user: int,
     to_root: int,
     seed: int,
+    prefix: list[Step] | None = None,
 ) -> Plan | None:
     if to_user < 1 or to_root < 1:
         raise ValueError("to_user and to_root must both be >= 1")
+    if prefix is not None and len(prefix) > to_user:
+        raise ValueError("prefix cannot be longer than to_user")
     rng = random.Random(seed)
     for _ in range(MAX_ATTEMPTS):
-        state = initial_state(os_name)
+        if prefix:
+            steps = list(prefix)
+            state = prefix[-1].state
+            used = {s.recipe.id for s in prefix}
+            remaining_user = to_user - len(prefix)
+            step_no = len(prefix)
+        else:
+            steps = []
+            state = initial_state(os_name)
+            used = set()
+            remaining_user = to_user
+            step_no = 0
 
-        user_steps = _search(state, set(), to_user, "user", rng, recipes, 0)
-        if user_steps is None:
-            continue
-        used = {s.recipe.id for s in user_steps}
-        mid_state = user_steps[-1].state
+        if remaining_user > 0:
+            user_steps = _search(state, used, remaining_user, "user", rng, recipes, step_no)
+            if user_steps is None:
+                continue
+            steps = steps + user_steps
+            used = used | {s.recipe.id for s in user_steps}
+            state = user_steps[-1].state
 
-        root_steps = _search(mid_state, used, to_root, "root", rng, recipes, to_user)
+        root_steps = _search(state, used, to_root, "root", rng, recipes, to_user)
         if root_steps is None:
             continue
-        plan = Plan(os_name=os_name, steps=[*user_steps, *root_steps], seed=seed)
+        plan = Plan(os_name=os_name, steps=[*steps, *root_steps], seed=seed)
         if is_relevant(plan):
             return plan
     return None
@@ -190,23 +206,31 @@ def generate_paths(
     to_root: int,
     seed: int,
     count: int,
+    share_prefix: bool = True,
 ) -> list[Plan]:
-    """Generate up to ``count`` distinct paths to the flags.
+    """Generate up to ``count`` distinct paths.
 
-    This is the first multi-path slice: paths are independent full chains. A
-    shared-prefix DAG is the next refinement.
+    With ``share_prefix`` the user phase of the previous path is reused, so the
+    paths form a DAG with a shared prefix and different root branches.
     """
     if count < 2:
         raise ValueError("multi-path needs at least 2 paths")
     paths: list[Plan] = []
     seen: set[tuple[str, ...]] = set()
     for index in range(count):
+        prefix = None
+        if share_prefix and paths and len(paths[-1].steps) >= to_user:
+            prefix = paths[-1].steps[:to_user]
+
+        found = False
         for attempt in range(50):
             if index == 0 and attempt == 0:
                 path_seed = seed
             else:
                 path_seed = derive_seed(seed, "path", str(index), str(attempt))
-            plan = generate(recipes, os_name, to_user, to_root, path_seed)
+            plan = generate(
+                recipes, os_name, to_user, to_root, path_seed, prefix=prefix
+            )
             if plan is None:
                 continue
             key = tuple(step.recipe.id for step in plan.steps)
@@ -214,7 +238,22 @@ def generate_paths(
                 continue
             seen.add(key)
             paths.append(plan)
+            found = True
             break
+
+        if not found and prefix is not None:
+            # no distinct branch with the shared prefix; fall back to independent
+            for attempt in range(50):
+                path_seed = derive_seed(seed, "path", str(index), "solo", str(attempt))
+                plan = generate(recipes, os_name, to_user, to_root, path_seed)
+                if plan is None:
+                    continue
+                key = tuple(step.recipe.id for step in plan.steps)
+                if key in seen:
+                    continue
+                seen.add(key)
+                paths.append(plan)
+                break
     return paths
 
 

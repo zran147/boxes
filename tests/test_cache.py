@@ -30,6 +30,7 @@ def make_recipe(tmp_path: Path, rid: str, body: str = "echo hi\n", assets: bool 
         walkthrough="",
         provision="provision.sh",
         poc="poc.sh",
+        poc_backend="container",
         assets="files" if assets else None,
         path=d / "recipe.yaml",
     )

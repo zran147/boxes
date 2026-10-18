@@ -1,0 +1,19 @@
+id: suid-find-privesc
+version: 1.0.0
+kind: privesc
+description: "A SUID find binary gives a root shell."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 0.3
+provision: ./provision.sh
+poc:
+  context: target
+  container: ./poc.sh
+actor: $u
+yields: ["root"]
+requires:
+  - access_shell($u)
+provides:
+  - access_root()
+walkthrough: |
+  `find` is SUID root in this image. As `{u}`, abusing it (GTFOBins) gives a
+  root shell and `root.txt`.

@@ -8,7 +8,7 @@ from boxes.recipe import Recipe
 from boxes.runner import build_env, resolve_actor, verify_machine, verify_paths, verify_recipe
 
 
-def make_recipe(tmp_path, rid, *, actor=None, provision=True, poc=True, requires=None, fidelity="container"):
+def make_recipe(tmp_path, rid, *, actor=None, provision=True, poc=True, requires=None, poc_backend="container"):
     d = tmp_path / rid
     d.mkdir()
     prov = None
@@ -33,7 +33,7 @@ def make_recipe(tmp_path, rid, *, actor=None, provision=True, poc=True, requires
         provision=prov,
         poc=p,
         actor=actor,
-        fidelity=fidelity,
+        poc_backend=poc_backend,
         path=d / "recipe.yaml",
     )
 
@@ -164,11 +164,11 @@ def test_verify_machine_refuses_when_a_step_is_symbolic(tmp_path):
 
 
 def test_vm_recipe_is_rejected_by_a_container_backend(tmp_path):
-    rec = make_recipe(tmp_path, "kernel-thing", fidelity="vm")
+    rec = make_recipe(tmp_path, "kernel-thing", poc_backend="vm")
     backend = FakeBackend()
     result = verify_recipe(rec, fixture(u="x"), backend, "img:test")
     assert not result.ok
-    assert "no poc.vm/poc.container" in result.error
+    assert "no PoC for the container backend" in result.error
     assert backend.calls == []
 
 
@@ -251,7 +251,7 @@ def test_vm_attacker_network_failure_is_a_warning_not_a_crash(tmp_path, monkeypa
         def network_create(self, name, attacker_pid=None):
             return ExecResult(1, "", "sudo: a password is required")
 
-    rec = make_recipe(tmp_path, "vm-net", fidelity="vm")
+    rec = make_recipe(tmp_path, "vm-net", poc_backend="vm")
     rec.poc_context = "attacker"
 
     monkeypatch.setattr(runner, "_attacker_backend", lambda backend: FakeBackend())
@@ -287,14 +287,14 @@ class FakeVMSnap(FakeBackend):
 def _vm_recipe(tmp_path, rid):
     d = tmp_path / rid
     d.mkdir()
-    (d / "provision.sh").write_text("echo provision\n")
-    (d / "poc.sh").write_text("echo poc\n")
+    (d / "provision.sh").write_text(f"echo provision-{rid}\n")
+    (d / "poc.sh").write_text(f"echo poc-{rid}\n")
     return Recipe(
         id=rid, version="1.0.0", kind="privesc", os=["ubuntu-*"], difficulty=0.1,
         requires=[parse_fact("open_port($h, 80)")],
         provides=[parse_fact("access_root()")], yields=["root"],
         params={}, walkthrough="", provision="provision.sh",
-        poc_scripts={"vm": "poc.sh"}, fidelity="vm", poc_context="target",
+        poc="poc.sh", poc_backend="vm", poc_context="target",
         path=d / "recipe.yaml",
     )
 
@@ -347,5 +347,30 @@ def test_verify_paths_uses_one_vm_and_snapshots_per_path(tmp_path, monkeypatch):
     assert len(results) == 2
     assert all(r.ok for r in results)
     assert len([c for c in backend.calls if c[0] == "create"]) == 1
-    assert backend.snapshots == ["clean", "pre-poc", "pre-poc"]
-    assert backend.restores == ["pre-poc", "clean", "pre-poc"]
+    assert backend.snapshots == ["clean", "shared", "pre-poc", "pre-poc"]
+    assert backend.restores == ["pre-poc", "shared", "pre-poc"]
+
+
+def test_verify_paths_provisions_the_shared_prefix_once(tmp_path, monkeypatch):
+    import boxes.runner as runner
+    from boxes.planner import Plan, Step
+
+    monkeypatch.setattr(runner.proxy_mod, "is_up", lambda: False)
+    prefix = _vm_recipe(tmp_path, "prefix")
+    root_a = _vm_recipe(tmp_path, "root-a")
+    root_b = _vm_recipe(tmp_path, "root-b")
+
+    shared = Step(prefix, "prefix#0", {}, prefix.requires, prefix.provides, [])
+    plan_a = Plan("ubuntu-22.04", [shared, Step(root_a, "root-a#1", {}, root_a.requires, root_a.provides, [])], 1)
+    plan_b = Plan("ubuntu-22.04", [shared, Step(root_b, "root-b#1", {}, root_b.requires, root_b.provides, [])], 2)
+    backend = FakeVMSnap()
+
+    results = verify_paths([plan_a, plan_b], [_Ctx(), _Ctx()], backend, "img:test")
+
+    assert len(results) == 2
+    assert all(r.ok for r in results)
+    assert len([c for c in backend.calls if c[0] == "create"]) == 1
+    provisions = [c for c in backend.calls if c[0] == "exec" and c[3] is None]
+    assert len([c for c in provisions if "provision-prefix" in c[2]]) == 1
+    assert backend.snapshots == ["clean", "shared", "pre-poc", "pre-poc"]
+    assert backend.restores == ["pre-poc", "shared", "pre-poc"]

@@ -1,6 +1,11 @@
 #!/bin/sh
 # Stand up FTP as required, then plant the leaked SSH credentials in the share.
 set -eu
+if ! command -v vsftpd >/dev/null 2>&1; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -qq
+    apt-get install -y -qq vsftpd
+fi
 u="${BOX_U:?BOX_U is not set}"
 p="${BOX_P-}"
 

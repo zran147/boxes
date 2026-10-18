@@ -8,7 +8,6 @@ provision: ./provision.sh
 poc:
   context: target
   container: ./poc.sh
-  vm: ./poc.sh
 actor: $u
 yields: ["root"]
 requires:

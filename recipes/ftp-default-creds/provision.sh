@@ -1,6 +1,11 @@
 #!/bin/sh
 # Stand up FTP with the selected "common" credential pair.
 set -eu
+if ! command -v vsftpd >/dev/null 2>&1; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -qq
+    apt-get install -y -qq vsftpd
+fi
 u="${BOX_FTP_USER:?BOX_FTP_USER is not set}"
 p="${BOX_FTP_PASS-}"
 
