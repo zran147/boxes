@@ -110,3 +110,23 @@ def test_machine_key_depends_on_build_seed(tmp_path):
     k1 = machine_key(plan, m1, "img-id", "container")
     k2 = machine_key(plan, m2, "img-id", "container")
     assert k1 != k2
+
+
+def test_recipe_cache_key_includes_the_apt_snapshot(tmp_path):
+    rec = make_recipe(tmp_path, "snap")
+    cache = Cache(tmp_path / "cache.json")
+    backend = FakeBackend()
+    pairs = [(rec, fx(rec))]
+
+    first = verify_recipes(
+        pairs, backend, "img", image_id="img-id", jobs=1, cache=cache,
+        apt_snapshot="20240101T000000Z",
+    )
+    assert first[0].ok and not first[0].cached
+
+    second = verify_recipes(
+        pairs, backend, "img", image_id="img-id", jobs=1, cache=cache,
+        apt_snapshot="20240201T000000Z",
+    )
+    assert second[0].ok and not second[0].cached
+    assert len(cache) == 2

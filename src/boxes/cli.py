@@ -246,7 +246,11 @@ def cmd_image(args) -> int:
                 file=sys.stderr,
             )
             return 2
-        res = prepare_base(PROJECT_ROOT / ".boxes-vm", rebuild=args.rebuild)
+        res = prepare_base(
+            Path(os.environ.get("BOXES_VM_STORE", str(PROJECT_ROOT / ".boxes-vm"))),
+            rebuild=args.rebuild,
+            base=Path(os.environ["BOXES_VM_BASE"]) if os.environ.get("BOXES_VM_BASE") else None,
+        )
         if not res.ok:
             print("VM base image prep failed:", file=sys.stderr)
             print(res.output(), file=sys.stderr)
@@ -290,10 +294,10 @@ def cmd_verify(args) -> int:
         return 2
     from . import proxy as proxy_mod
 
-    if not proxy_mod.is_up():
+    if not proxy_mod.services_ok():
         print(
-            "warning: provisioning proxy is down; recipes that install packages "
-            "will fail (run `boxes proxy up`)",
+            "warning: provisioning proxy is down or unhealthy; recipes that "
+            "install packages will fail (run `boxes proxy up`)",
             file=sys.stderr,
         )
     backend = _prepare_backend(args)

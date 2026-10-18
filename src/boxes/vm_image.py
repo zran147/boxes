@@ -7,6 +7,7 @@ for every machine, so per-machine boots skip cloud-init's first-boot work.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import socket
@@ -17,6 +18,8 @@ from pathlib import Path
 from .backends.base import ExecResult
 
 CLOUD_URL = "https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img"
+CLOUD_SHA256SUMS = "https://cloud-images.ubuntu.com/jammy/current/SHA256SUMS"
+CLOUD_IMAGE_NAME = "jammy-server-cloudimg-amd64.img"
 USER = "boxes"
 SUPPORTED_OS = "ubuntu-22.04"
 
@@ -33,6 +36,25 @@ def _run(args: list[str], *, timeout: int = 120) -> ExecResult:
 
 def _valid_qcow2(path: Path) -> bool:
     return _run(["qemu-img", "info", "-f", "qcow2", str(path)], timeout=30).ok
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _expected_cloud_sha() -> str | None:
+    res = _run(["curl", "-fLsS", "--max-time", "120", CLOUD_SHA256SUMS], timeout=150)
+    if not res.ok:
+        return None
+    for line in res.stdout.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[1].lstrip("*") == CLOUD_IMAGE_NAME:
+            return parts[0]
+    return None
 
 
 def _kill_prep(pidfile: Path) -> None:
@@ -74,12 +96,20 @@ def _wait_ssh(port: int, key: Path, timeout: int) -> bool:
     return False
 
 
-def prepare_base(store: Path, rebuild: bool = False, boot_timeout: int = 600) -> ExecResult:
+def prepare_base(
+    store: Path,
+    rebuild: bool = False,
+    boot_timeout: int = 600,
+    base: Path | None = None,
+) -> ExecResult:
     store = Path(store)
     store.mkdir(parents=True, exist_ok=True)
-    prebaked = store / "base-prebaked.qcow2"
+    prebaked = Path(base) if base else store / "base-prebaked.qcow2"
+    prebaked.parent.mkdir(parents=True, exist_ok=True)
     if prebaked.is_file() and not rebuild:
-        return ExecResult(0, f"{prebaked} already exists", "")
+        if _valid_qcow2(prebaked):
+            return ExecResult(0, f"{prebaked} already exists", "")
+        prebaked.unlink(missing_ok=True)
 
     for tool in ("qemu-system-x86_64", "qemu-img", "cloud-localds", "ssh-keygen"):
         if shutil.which(tool) is None:
@@ -110,6 +140,12 @@ def prepare_base(store: Path, rebuild: bool = False, boot_timeout: int = 600) ->
         if not _valid_qcow2(tmp):
             tmp.unlink(missing_ok=True)
             return ExecResult(1, "", "downloaded VM image is not a valid qcow2")
+        expected = _expected_cloud_sha()
+        if expected and _sha256_file(tmp) != expected:
+            tmp.unlink(missing_ok=True)
+            return ExecResult(
+                1, "", "downloaded VM image checksum mismatch; rerun the prep"
+            )
         tmp.replace(cloud)
 
     pub = (store / "boxes_key.pub").read_text().strip()
@@ -210,7 +246,7 @@ def prepare_base(store: Path, rebuild: bool = False, boot_timeout: int = 600) ->
             pass
 
     prebaked.unlink(missing_ok=True)
-    work.replace(prebaked)
+    shutil.move(str(work), str(prebaked))
     for path in (log, pidfile, monitor):
         Path(path).unlink(missing_ok=True)
     return ExecResult(0, f"prepared {prebaked}", "")

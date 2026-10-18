@@ -14,9 +14,9 @@ It works in three layers:
 3. **Check** — a plan is only emitted if every precondition was met earlier, and
    a recipe is only considered proven if its PoC exits 0.
 
-Status: **P0 and P1 done.** P2 is partial — QEMU, pre-baked VM bases,
-snapshots, the shared-prefix DAG, and the provisioning proxy are working.
-Remaining P2 work is KVM acceleration and more VM-only content.
+Status: **P0–P2 done.** QEMU/TCG, pre-baked VM bases, snapshots, the
+shared-prefix DAG, the provisioning proxy, and apt snapshot pinning are all
+verified. P3 (coherence/scale) and P4 (registry) are next.
 
 ## Concepts
 
@@ -90,7 +90,9 @@ VM recipes (QEMU, TCG-verified):
 - `vm-kernel-probe` — `poc.vm` smoke test (PID 1 is systemd, kernel boot image).
 - `package-probe` — provisioning-proxy smoke test.
 
-Multi-path (`--multi-path N`) generates and verifies N independent full paths.
+Multi-path (`--multi-path N`) generates N paths sharing the user phase. On one
+VM the shared prefix is provisioned once, then each root branch runs with a
+fresh attacker; Docker verifies each path in its own fast container.
 
 ## Usage
 
@@ -123,7 +125,7 @@ are numbered by position (`ftp-config-leak-creds#1.ssh_user`), so multiple
 credential sets in one plan never collide. Params can be `choice`, `password`,
 or `token` (randomised identifiers/filenames).
 
-### Multi-path (experimental)
+### Multi-path
 
 ```bash
 boxes gen --multi-path 2 --seed 42 --to-user 3 --to-root 2
@@ -274,7 +276,7 @@ because every step depends on the previous ones. Container timings on this host:
 13 recipes cold with 4 jobs ≈ 1–2 min (the package probe installs via the
 proxy); warm cache ≈ 0.3 s.
 
-## VM backend (experimental)
+## VM backend
 
 Prerequisites: `qemu-system-x86`, `cloud-image-utils`, `libguestfs-tools`, and
 Docker (attacker-context VM PoCs use the Docker attacker container). KVM makes
@@ -287,8 +289,10 @@ boxes image build --backend qemu --os ubuntu-22.04
 boxes verify --recipe sudo-misconfig-privesc --backend qemu
 ```
 
-The cloud image download is resumable (`jammy-base.img.part`), so a failed or
-interrupted download continues on the next run.
+The cloud image download is resumable (`jammy-base.img.part`), validated as a
+qcow2, and checked against the current `SHA256SUMS`. The VM store defaults to
+`.boxes-vm`; override it with `BOXES_VM_STORE` (and the base path with
+`BOXES_VM_BASE`).
 
 Measured on a TCG-only host: pre-bake ≈ 5–9 min depending on the cloud image
 download, cold verify ≈ 2 min, warm cache ≈ 0.2 s, `savevm` ≈ 2 s,
@@ -432,6 +436,6 @@ The sudoers rule must allow the helper subcommands, hence `boxes net *`.
 |-------|-------|--------|
 | **P0** — symbolic generation | Facts + unification, typed predicates, recipes, bounded-length planner, `open_port` prelude, causal connectivity, two-seed manifest, lint, scaffold, per-recipe harness | **Done** |
 | **P1** — container fast path | Pluggable backend, target + attacker images, internal network, shared attacker container, provision/poc contract, assets, L2 + L3 verification, content-addressed cache, parallel jobs, real recipes | **Done** |
-| **P2** — fidelity + branching | QEMU + prebaked base + snapshots; one PoC per recipe (`poc.container` XOR `poc.vm`); pre-PoC snapshot/restore; shared-prefix DAG with one-VM verification and attacker reset; hybrid provisioning proxy (durable apt cache + squid + artifact store) with egress-only phase and seal; apt snapshot pinning | **Partial** |
+| **P2** — fidelity + branching | QEMU + prebaked base + snapshots; one PoC per recipe (`poc.container` XOR `poc.vm`); pre-PoC snapshot/restore; shared-prefix DAG with one-VM verification and attacker reset; hybrid provisioning proxy (durable apt cache + squid + artifact store) with egress-only phase and seal; apt snapshot pinning; VM base checksum/resume/store overrides; proxy health/cleanup | **Done** |
 | **P3** — coherence + scale | Difficulty budgets, themes, typed choices, more distros, a complete attacker toolkit | Planned |
 | **P4** — registry | Recipe registry API + client, signed recipes, sandboxed execution, per-recipe CI | Planned |

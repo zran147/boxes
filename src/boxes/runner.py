@@ -704,6 +704,8 @@ def verify_recipes(
     apt_snapshot: str | None = None,
 ) -> list[VerifyResult]:
     """Verify several recipes, using the cache and up to ``jobs`` machines."""
+    if apt_snapshot and "apt-snapshot=" not in image_id:
+        image_id = f"{image_id}|apt-snapshot={apt_snapshot}"
     fidelity = _backend_fidelity(backend)
     items = [
         (recipe, fixture, recipe_key(recipe, fixture.context, image_id, fidelity))

@@ -142,6 +142,7 @@ def down(clean: bool = False) -> ExecResult:
         _run(["sudo", "-n", boxes, "net", "provision-down"], timeout=60)
     _run(["docker", "rm", "-f", CONTAINER], timeout=60)
     if clean:
+        _run(["docker", "network", "rm", NETWORK], timeout=60)
         _run(["docker", "volume", "rm", "-f", CACHE_VOLUME], timeout=60)
         shutil.rmtree(ARTIFACTS_DIR, ignore_errors=True)
     return ExecResult(0, "", "")
