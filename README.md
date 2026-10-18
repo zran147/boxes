@@ -88,6 +88,7 @@ VM recipes (QEMU, TCG-verified):
 - `ssh-creds-foothold` — SSH foothold with a provision that works on containers
   and VMs.
 - `sudo-misconfig-privesc` and `suid-find-privesc` — two root paths.
+- `vm-kernel-probe` — `poc.vm` smoke test (PID 1 is systemd, kernel boot image).
 - `package-probe` — provisioning-proxy smoke test.
 
 Multi-path (`--multi-path N`) generates and verifies N independent full paths.
@@ -187,7 +188,9 @@ walkthrough: |
 The product is always a VM. `poc.container` is a fast verification proxy; a
 container pass is accepted without a VM re-run, provided the container and VM
 bases stay behaviourally aligned. `poc.vm` is for behaviour a container cannot
-reproduce (kernel/boot/init). A recipe with both can be verified on either.
+reproduce (kernel/boot/init), such as the `vm-kernel-probe` smoke recipe. A
+recipe declares exactly one of the two; a container PoC is also allowed on the
+VM, while a VM PoC is never run on a container.
 
 ```bash
 # one-time Docker images (target + attacker)
@@ -214,8 +217,7 @@ more tooling.
 provision: ./provision.sh    # shared; runs as root in the target
 poc:
   context: attacker          # attacker | target
-  container: ./poc.sh        # fast container verification (optional)
-  vm: ./poc-vm.sh            # VM variant (optional)
+  container: ./poc.sh        # exactly one of container/vm
 actor: $u                    # target-context principal (default: attacker)
 poc_timeout: 120
 ```
@@ -377,12 +379,14 @@ boxes proxy down
 boxes proxy clean     # also remove the cache volume
 ```
 
-`boxes proxy up` builds `boxes/proxy` (squid plus a static artifact server),
-starts `boxes-proxy` on the `boxes-provision` Docker network, and attaches it to
-`br-provision` at `10.67.0.2`. Provisioning receives:
+`boxes proxy up` builds `boxes/proxy` (apt-cacher-ng + squid + a static
+artifact server), starts `boxes-proxy` on the `boxes-provision` Docker network,
+and attaches it to `br-provision` at `10.67.0.2`. Provisioning receives:
 
 - `BOX_PROXY_URL` plus `http_proxy`/`https_proxy` at
   `http://10.67.0.2:3128` (or `http://boxes-proxy:3128` for containers);
+- `BOX_APT_PROXY` at `http://10.67.0.2:3142` (or
+  `http://boxes-proxy:3142`), written into `/etc/apt/apt.conf.d/01boxes`;
 - `BOX_ARTIFACTS_URL` at `http://10.67.0.2:8000` (or
   `http://boxes-proxy:8000`);
 - a provision NIC (`10.67.0.x`) on `br-provision`, configured by the backend;
@@ -392,12 +396,21 @@ The VM's management NIC uses QEMU `restrict=on`, so SSH hostfwd still works but
 the guest has no route to the host or internet. During provisioning, apt and pip
 go to the proxy; after the seal, only the host-only attack network remains.
 
-The proxy keeps an **in-memory** HTTP cache; HTTPS (pip) is tunneled via
-CONNECT and not cached. The durable/pinned path is the **artifact store**:
-`.boxes-cache/artifacts` is served at `:8000`, and recipes fetch pinned files
-from `$BOX_ARTIFACTS_URL`. An origin allowlist limits traffic to
-Ubuntu/Debian/PyPI/GitHub. Pin package versions or snapshot dates in recipes for
-reproducibility. A robust disk cache is future work. After a host or Docker
+apt uses the **durable** apt-cacher-ng cache (volume `boxes-proxy-cache`); pip
+and other HTTP goes through squid (in-memory cache), with HTTPS tunneled via
+CONNECT. An origin allowlist limits squid to Ubuntu/Debian/PyPI/GitHub. The
+artifact store is `.boxes-cache/artifacts`, served at `:8000`; recipes fetch
+pinned files from `$BOX_ARTIFACTS_URL`.
+
+Pin a full apt snapshot with `--apt-snapshot`:
+
+```bash
+boxes verify --recipe package-probe --apt-snapshot 20240101T000000Z
+```
+
+The runner rewrites the distro sources to `snapshot.ubuntu.com` /
+`snapshot.debian.org`, refreshes the indexes, and keeps the pinned state for the
+rest of the machine (the cache key includes the date). After a host or Docker
 restart, run `boxes proxy up` again; slow TCG installs can be given more time
 with `BOXES_PROVISION_TIMEOUT` (seconds, default 1200).
 
@@ -409,6 +422,6 @@ The sudoers rule must allow the helper subcommands, hence `boxes net *`.
 |-------|-------|--------|
 | **P0** — symbolic generation | Facts + unification, typed predicates, recipes, bounded-length planner, `open_port` prelude, causal connectivity, two-seed manifest, lint, scaffold, per-recipe harness | **Done** |
 | **P1** — container fast path | Pluggable backend, target + attacker images, internal network, shared attacker container, provision/poc contract, assets, L2 + L3 verification, content-addressed cache, parallel jobs, real recipes | **Done** |
-| **P2** — fidelity + branching | QEMU + prebaked base + snapshots; one PoC per recipe (`poc.container` XOR `poc.vm`); pre-PoC snapshot/restore; shared-prefix DAG with one-VM verification and attacker reset; provisioning proxy (squid + artifact store, apt/pip/artifacts) with egress-only phase and seal; pinned snapshot dates and a durable cache next | **Partial** |
+| **P2** — fidelity + branching | QEMU + prebaked base + snapshots; one PoC per recipe (`poc.container` XOR `poc.vm`); pre-PoC snapshot/restore; shared-prefix DAG with one-VM verification and attacker reset; hybrid provisioning proxy (durable apt cache + squid + artifact store) with egress-only phase and seal; apt snapshot pinning | **Partial** |
 | **P3** — coherence + scale | Difficulty budgets, themes, typed choices, more distros, a complete attacker toolkit | Planned |
 | **P4** — registry | Recipe registry API + client, signed recipes, sandboxed execution, per-recipe CI | Planned |

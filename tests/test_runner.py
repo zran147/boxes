@@ -1,11 +1,21 @@
 from dataclasses import dataclass
 
+import pytest
+
 from boxes.backends import FakeBackend
 from boxes.backends.base import ExecResult
 from boxes.facts import parse_fact
 from boxes.harness import Fixture
 from boxes.recipe import Recipe
 from boxes.runner import build_env, resolve_actor, verify_machine, verify_paths, verify_recipe
+
+
+@pytest.fixture(autouse=True)
+def _proxy_down(monkeypatch):
+    """Unit tests are deterministic even when a real proxy is running."""
+    import boxes.runner as runner
+
+    monkeypatch.setattr(runner.proxy_mod, "is_up", lambda: False)
 
 
 def make_recipe(tmp_path, rid, *, actor=None, provision=True, poc=True, requires=None, poc_backend="container"):
@@ -374,3 +384,36 @@ def test_verify_paths_provisions_the_shared_prefix_once(tmp_path, monkeypatch):
     assert len([c for c in provisions if "provision-prefix" in c[2]]) == 1
     assert backend.snapshots == ["clean", "shared", "pre-poc", "pre-poc"]
     assert backend.restores == ["pre-poc", "shared", "pre-poc"]
+
+
+def test_apt_config_points_at_the_durable_proxy(tmp_path, monkeypatch):
+    import boxes.runner as runner
+
+    monkeypatch.setattr(runner.proxy_mod, "is_up", lambda: True)
+    backend = FakeBackend()
+    result = verify_recipe(make_recipe(tmp_path, "apt-ok"), fixture(), backend, "img:test")
+
+    assert result.ok
+    scripts = [c[2] for c in backend.calls if c[0] == "exec"]
+    assert any("Acquire::http::Proxy" in s and "boxes-proxy:3142" in s for s in scripts)
+    assert any("Acquire::https::Proxy" in s and "boxes-proxy:3128" in s for s in scripts)
+    assert not any("snapshot.ubuntu.com" in s for s in scripts)
+
+
+def test_apt_snapshot_rewrites_the_sources(tmp_path, monkeypatch):
+    import boxes.runner as runner
+
+    monkeypatch.setattr(runner.proxy_mod, "is_up", lambda: True)
+    backend = FakeBackend()
+    result = verify_recipe(
+        make_recipe(tmp_path, "apt-snap"),
+        fixture(),
+        backend,
+        "img:test",
+        apt_snapshot="20240101T000000Z",
+    )
+
+    assert result.ok
+    scripts = [c[2] for c in backend.calls if c[0] == "exec"]
+    assert any("snapshot.ubuntu.com/ubuntu/20240101T000000Z" in s for s in scripts)
+    assert any("apt-get update" in s for s in scripts)

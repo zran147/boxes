@@ -1,0 +1,19 @@
+id: vm-kernel-probe
+version: 1.0.0
+kind: discovery
+description: "VM-only probe: confirm the product really booted a VM kernel."
+os: ["ubuntu-*"]
+difficulty: 0.1
+provision: ./provision.sh
+poc:
+  context: target
+  vm: ./poc.sh
+actor: boxes
+requires:
+  - open_port($h, 22)
+provides:
+  - knows(vm, systemd)
+walkthrough: |
+  The product is a VM, so PID 1 is `systemd` and `/proc/cmdline` carries a
+  boot image. This recipe is only meaningful on a VM; it is skipped by
+  container verification.

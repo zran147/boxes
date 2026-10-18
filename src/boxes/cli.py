@@ -262,6 +262,8 @@ def cmd_verify(args) -> int:
         image_id = backend.image_id(image)
     else:
         image_id = f"{backend.image_id(image)}|{backend.image_id(attacker_image())}"
+    if args.apt_snapshot:
+        image_id = f"{image_id}|apt-snapshot={args.apt_snapshot}"
     cache = _make_cache(args)
 
     if args.machine:
@@ -301,6 +303,7 @@ def cmd_verify(args) -> int:
                     backend,
                     image,
                     keep=args.keep,
+                    apt_snapshot=args.apt_snapshot,
                 )
                 for (path, manifest, key, _), result in zip(todo, results):
                     _print_verify(result)
@@ -328,7 +331,7 @@ def cmd_verify(args) -> int:
             print("machine already verified (cache hit)")
             return 0
 
-        result = verify_machine(plan, manifest, backend, image, keep=args.keep)
+        result = verify_machine(plan, manifest, backend, image, keep=args.keep, apt_snapshot=args.apt_snapshot)
         _print_verify(result)
         if result.ok:
             cache.put(key, {"plan_seed": plan.seed, "build_seed": build_seed})
@@ -374,6 +377,7 @@ def cmd_verify(args) -> int:
         jobs=args.jobs,
         cache=cache,
         keep=args.keep,
+        apt_snapshot=args.apt_snapshot,
     )
     for result in results:
         _print_verify(result)
@@ -496,6 +500,8 @@ def build_parser() -> argparse.ArgumentParser:
     v.add_argument("--keep", action="store_true", help="keep the container for debugging")
     v.add_argument("--jobs", type=int, default=min(4, os.cpu_count() or 1),
                    help="parallel containers when verifying --all")
+    v.add_argument("--apt-snapshot", default=None, dest="apt_snapshot",
+                   help="pin apt to a snapshot timestamp, e.g. 20240101T000000Z")
     v.add_argument("--no-cache", action="store_true", dest="no_cache",
                    help="ignore and do not write the verification cache")
     v.add_argument("--clear-cache", action="store_true", dest="clear_cache",

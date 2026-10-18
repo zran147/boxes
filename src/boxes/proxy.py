@@ -22,6 +22,7 @@ NETWORK = "boxes-provision"
 CACHE_VOLUME = "boxes-proxy-cache"
 PROXY_IP = "10.67.0.2"
 PROXY_PORT = 3128
+APT_PROXY_PORT = 3142
 ARTIFACT_PORT = 8000
 ARTIFACTS_DIR = PROJECT_ROOT / ".boxes-cache" / "artifacts"
 IMAGE_CONTEXT = PROJECT_ROOT / "images" / "proxy"
@@ -43,6 +44,10 @@ def proxy_url() -> str:
 
 def artifacts_url() -> str:
     return f"http://{PROXY_IP}:{ARTIFACT_PORT}"
+
+
+def apt_proxy_url() -> str:
+    return f"http://{PROXY_IP}:{APT_PROXY_PORT}"
 
 
 def is_up() -> bool:
@@ -76,7 +81,7 @@ def up(rebuild: bool = False) -> ExecResult:
             "--name", CONTAINER,
             "--network", NETWORK,
             "--network-alias", "boxes-proxy",
-            "-v", f"{CACHE_VOLUME}:/var/spool/squid",
+            "-v", f"{CACHE_VOLUME}:/var/cache/apt-cacher-ng",
             "-v", f"{ARTIFACTS_DIR}:/srv/artifacts",
             IMAGE,
         ],
@@ -102,6 +107,7 @@ def up(rebuild: bool = False) -> ExecResult:
         "container": CONTAINER,
         "network": NETWORK,
         "url": proxy_url(),
+        "apt_proxy_url": apt_proxy_url(),
         "artifacts_url": artifacts_url(),
     }), "")
 
@@ -125,6 +131,7 @@ def status() -> dict:
         "network": NETWORK,
         "proxy_ip": PROXY_IP,
         "url": proxy_url(),
+        "apt_proxy_url": apt_proxy_url(),
         "artifacts_url": artifacts_url(),
         "cache_volume": CACHE_VOLUME,
         "artifacts_dir": str(ARTIFACTS_DIR),

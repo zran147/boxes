@@ -29,7 +29,7 @@ from .cache import Cache, recipe_key
 from .images import attacker_image
 from .manifest import Manifest
 from .planner import Plan
-from .proxy import ARTIFACT_PORT, PROXY_IP, PROXY_PORT
+from .proxy import APT_PROXY_PORT, ARTIFACT_PORT, PROXY_IP, PROXY_PORT
 from . import proxy as proxy_mod
 from .recipe import Recipe
 
@@ -96,6 +96,7 @@ def build_env(
         env["NO_PROXY"] = "localhost,127.0.0.1"
         base = proxy_url.rsplit(":", 1)[0]
         env["BOX_ARTIFACTS_URL"] = f"{base}:{ARTIFACT_PORT}"
+        env["BOX_APT_PROXY"] = f"http://{base}:{APT_PROXY_PORT}"
     return env
 
 
@@ -207,6 +208,8 @@ class _Setup:
     kept: bool = False
     provision: bool = False
     proxy_url: str | None = None
+    apt_proxy_url: str | None = None
+    apt_snapshot: str | None = None
 
 def _setup(
     backend: Backend,
@@ -214,15 +217,21 @@ def _setup(
     image: str,
     needs_attacker: bool,
     keep: bool,
+    apt_snapshot: str | None = None,
 ) -> tuple[_Setup | None, str | None]:
     vm = _backend_fidelity(backend) == "vm"
     proxy_up = proxy_mod.is_up()
     provision = proxy_up
     proxy_url = None
+    apt_proxy_url = None
     if proxy_up:
         proxy_url = (
             f"http://{PROXY_IP}:{PROXY_PORT}" if vm
             else f"http://boxes-proxy:{PROXY_PORT}"
+        )
+        apt_proxy_url = (
+            f"http://{PROXY_IP}:{APT_PROXY_PORT}" if vm
+            else f"http://boxes-proxy:{APT_PROXY_PORT}"
         )
     setup = _Setup(
         target=_container_name("target", label),
@@ -232,6 +241,8 @@ def _setup(
         kept=keep,
         provision=provision,
         proxy_url=proxy_url,
+        apt_proxy_url=apt_proxy_url,
+        apt_snapshot=apt_snapshot,
     )
 
     # VM: the attacker container must exist before `boxes net up` (it needs the
@@ -290,6 +301,51 @@ def _teardown(backend: Backend, setup: _Setup, keep: bool) -> None:
         backend.network_destroy(setup.network)
 
 
+def _configure_apt(backend: Backend, setup: _Setup, result: VerifyResult) -> None:
+    """Point apt at the durable proxy and optionally pin a snapshot date.
+
+    apt gets its own proxy (apt-cacher-ng) while pip/curl keep the general
+    squid proxy. The optional snapshot rewrites the distro sources, then
+    refreshes the indexes once so later provisioning hits the cache.
+    """
+    if not setup.provision or not setup.proxy_url or not setup.apt_proxy_url:
+        return
+    script = (
+        "set -eu\n"
+        "mkdir -p /etc/apt/apt.conf.d\n"
+        "cat > /etc/apt/apt.conf.d/01boxes <<'EOF'\n"
+        f'Acquire::http::Proxy "{setup.apt_proxy_url}";\n'
+        f'Acquire::https::Proxy "{setup.proxy_url}";\n'
+        "EOF\n"
+    )
+    if setup.apt_snapshot:
+        snap = setup.apt_snapshot
+        script += (
+            ". /etc/os-release\n"
+            'case "$ID" in\n'
+            "  ubuntu)\n"
+            "    cat > /etc/apt/sources.list <<EOF\n"
+            f"deb http://snapshot.ubuntu.com/ubuntu/{snap}/ $VERSION_CODENAME main restricted universe multiverse\n"
+            f"deb http://snapshot.ubuntu.com/ubuntu/{snap}/ $VERSION_CODENAME-updates main restricted universe multiverse\n"
+            f"deb http://snapshot.ubuntu.com/ubuntu/{snap}/ $VERSION_CODENAME-security main restricted universe multiverse\n"
+            "EOF\n"
+            "    ;;\n"
+            "  debian)\n"
+            "    cat > /etc/apt/sources.list <<EOF\n"
+            f"deb https://snapshot.debian.org/archive/debian/{snap}/ $VERSION_CODENAME main\n"
+            f"deb https://snapshot.debian.org/archive/debian-security/{snap}/ $VERSION_CODENAME-security main\n"
+            "EOF\n"
+            "    ;;\n"
+            "  *)\n"
+            '    echo "no snapshot source for $ID" >&2; exit 1 ;;\n'
+            "esac\n"
+            "rm -f /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources\n"
+            "apt-get update -qq\n"
+        )
+    res = backend.exec(setup.target, script, user=None, timeout=PROVISION_TIMEOUT)
+    result.add(StepResult("machine", "apt-config", res.ok, res.exit_code, res.output()))
+
+
 def _poc(
     backend: Backend,
     setup: _Setup,
@@ -340,6 +396,7 @@ def verify_recipe(
     backend: Backend,
     image: str,
     keep: bool = False,
+    apt_snapshot: str | None = None,
 ) -> VerifyResult:
     result = VerifyResult(label=recipe.id)
     if not recipe.verifiable:
@@ -353,7 +410,7 @@ def verify_recipe(
         )
         return result
 
-    setup, err = _setup(backend, recipe.id, image, _attacker_for(recipe), keep)
+    setup, err = _setup(backend, recipe.id, image, _attacker_for(recipe), keep, apt_snapshot=apt_snapshot)
     if setup is None:
         result.ok = False
         result.error = err
@@ -364,6 +421,9 @@ def verify_recipe(
 
     snapshot_ok = False
     try:
+        _configure_apt(backend, setup, result)
+        if not result.ok:
+            return result
         ctx = dict(fixture.context)
         ctx.setdefault("os", fixture.os)
         assets = _copy_assets(backend, setup.target, recipe)
@@ -402,6 +462,7 @@ def verify_machine(
     backend: Backend,
     image: str,
     keep: bool = False,
+    apt_snapshot: str | None = None,
 ) -> VerifyResult:
     result = VerifyResult(label=f"machine seed={plan.seed}")
 
@@ -425,7 +486,9 @@ def verify_machine(
         return result
 
     needs_attacker = any(_attacker_for(s.recipe) for s in plan.steps)
-    setup, err = _setup(backend, f"seed-{plan.seed}", image, needs_attacker, keep)
+    setup, err = _setup(
+        backend, f"seed-{plan.seed}", image, needs_attacker, keep, apt_snapshot=apt_snapshot
+    )
     if setup is None:
         result.ok = False
         result.error = err
@@ -437,6 +500,9 @@ def verify_machine(
     contexts = []
     snapshot_ok = False
     try:
+        _configure_apt(backend, setup, result)
+        if not result.ok:
+            return result
         for step in plan.steps:
             ctx = dict(manifest.step_context(step))
             ctx.setdefault("os", plan.os_name)
@@ -474,6 +540,7 @@ def verify_paths(
     backend: Backend,
     image: str,
     keep: bool = False,
+    apt_snapshot: str | None = None,
 ) -> list[VerifyResult]:
     """Verify multiple paths on one VM boot using snapshots.
 
@@ -486,13 +553,15 @@ def verify_paths(
     )
     if fallback:
         return [
-            verify_machine(path, manifest, backend, image, keep=keep)
+            verify_machine(path, manifest, backend, image, keep=keep, apt_snapshot=apt_snapshot)
             for path, manifest in zip(paths, manifests)
         ]
 
     needs_attacker = any(_attacker_for(s.recipe) for p in paths for s in p.steps)
     base_label = f"paths seed={paths[0].seed}"
-    setup, err = _setup(backend, base_label, image, needs_attacker, keep)
+    setup, err = _setup(
+        backend, base_label, image, needs_attacker, keep, apt_snapshot=apt_snapshot
+    )
     if setup is None:
         failed = VerifyResult(label=base_label)
         failed.ok = False
@@ -502,6 +571,12 @@ def verify_paths(
     prefix_len = _common_prefix(paths)
     results = [VerifyResult(label=f"path seed={p.seed}") for p in paths]
     try:
+        _configure_apt(backend, setup, results[0])
+        if not results[0].ok:
+            for result in results:
+                result.ok = False
+                result.error = "apt configuration failed"
+            return results
         clean = backend.snapshot(setup.target, "clean")
         if not clean.ok:
             for result in results:
@@ -616,6 +691,7 @@ def verify_recipes(
     jobs: int = 1,
     cache: Cache | None = None,
     keep: bool = False,
+    apt_snapshot: str | None = None,
 ) -> list[VerifyResult]:
     """Verify several recipes, using the cache and up to ``jobs`` machines."""
     fidelity = _backend_fidelity(backend)
@@ -635,7 +711,9 @@ def verify_recipes(
 
     def run(index: int) -> VerifyResult:
         recipe, fixture, _ = items[index]
-        return verify_recipe(recipe, fixture, backend, image, keep=keep)
+        return verify_recipe(
+            recipe, fixture, backend, image, keep=keep, apt_snapshot=apt_snapshot
+        )
 
     if jobs <= 1:
         for index in todo:

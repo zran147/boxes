@@ -155,6 +155,28 @@ def _search(
     return None
 
 
+def _useful_recipes(recipes: list[Recipe]) -> list[Recipe]:
+    """Drop recipes whose facts no other recipe consumes.
+
+    A discovery that only yields an unused fact (e.g. a VM smoke probe) can
+    never be part of a causally relevant chain, so it is not a planner
+    candidate. Recipes that yield a flag are always kept.
+    """
+    required = [f for r in recipes for f in r.requires if f.pred not in PRELUDE]
+    useful: list[Recipe] = []
+    for recipe in recipes:
+        if recipe.yields:
+            useful.append(recipe)
+            continue
+        if any(
+            unify_fact(provided, needed, {}) is not None
+            for provided in recipe.provides
+            for needed in required
+        ):
+            useful.append(recipe)
+    return useful
+
+
 def generate(
     recipes: list[Recipe],
     os_name: str,
@@ -167,6 +189,7 @@ def generate(
         raise ValueError("to_user and to_root must both be >= 1")
     if prefix is not None and len(prefix) > to_user:
         raise ValueError("prefix cannot be longer than to_user")
+    recipes = _useful_recipes(recipes)
     rng = random.Random(seed)
     for _ in range(MAX_ATTEMPTS):
         if prefix:

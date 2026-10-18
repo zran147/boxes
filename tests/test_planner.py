@@ -202,3 +202,10 @@ def test_multi_path_writeup_and_json(pool):
     data = paths_to_dict(paths, manifests)
     assert len(data["paths"]) == 2
     assert data["build_seed"] == manifests[0].build_seed
+
+
+def test_unused_discovery_is_not_a_planner_candidate(pool):
+    for seed in range(20):
+        plan = generate(pool, OS, 3, 2, seed)
+        assert plan is not None
+        assert all(s.recipe.id != "vm-kernel-probe" for s in plan.steps)
