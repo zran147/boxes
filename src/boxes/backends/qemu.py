@@ -1,4 +1,4 @@
-"""QEMU backend (experimental).
+"""QEMU backend.
 
 Design decisions driven by measurements on a TCG-only host:
 
@@ -30,6 +30,7 @@ import time
 from pathlib import Path
 
 from .base import ExecResult
+from .. import accel as accel_mod
 
 QEMU = "qemu-system-x86_64"
 BOOT_TIMEOUT = 600
@@ -47,11 +48,13 @@ class QemuBackend:
         base: Path | None = None,
         key: Path | None = None,
         user: str = "boxes",
+        accel: str | None = None,
     ) -> None:
         root = Path(__file__).resolve().parents[3]
         self.store = Path(store or os.environ.get("BOXES_VM_STORE", root / ".boxes-vm"))
         self.base = Path(base or os.environ.get("BOXES_VM_BASE", self.store / "base-prebaked.qcow2"))
         self.key = Path(key or os.environ.get("BOXES_VM_KEY", self.store / "boxes_key"))
+        self.accel = accel_mod.resolve(accel)
         self.seed = self.store / "seed.iso"
         self.user = user
         self.run_dir = self.store / "run"
@@ -277,8 +280,7 @@ class QemuBackend:
 
         args = [
             QEMU,
-            "-accel", "tcg,thread=multi",
-            "-cpu", "max",
+            *accel_mod.args(self.accel),
             "-m", "1024", "-smp", "2",
             "-drive", f"file={overlay},if=virtio,format=qcow2",
         ]

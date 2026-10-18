@@ -10,13 +10,31 @@ It works in three layers:
 1. **Plan** — symbolic facts + recipes, no VMs. Generates a machine and prints a
    walkthrough.
 2. **Build/verify** — provisions a real target and runs each recipe's PoC.
-   Containers are the fast path; QEMU is available for VM-only recipes.
+   Containers are the fast path; QEMU verifies the real VM product, including
+   VM-only recipes.
 3. **Check** — a plan is only emitted if every precondition was met earlier, and
    a recipe is only considered proven if its PoC exits 0.
 
-Status: **P0–P2 done.** QEMU/TCG, pre-baked VM bases, snapshots, the
-shared-prefix DAG, the provisioning proxy, and apt snapshot pinning are all
-verified. P3 (coherence/scale) and P4 (registry) are next.
+Status: **P0–P2 done.** QEMU (KVM when usable, TCG fallback), pre-baked VM
+bases, snapshots, the shared-prefix DAG, the provisioning proxy, and apt
+snapshot pinning are all verified. P3 (coherence/scale) and P4 (registry) are
+next.
+
+## Quick start
+
+```bash
+# container fast path
+boxes image build --os ubuntu-22.04
+boxes proxy up                      # needs the sudoers rule below
+boxes verify --all --jobs 4
+
+# plan only
+boxes gen --to-user 3 --to-root 2 --seed 42
+
+# real VM product (prepares the VM base + Docker attacker image)
+boxes image build --backend qemu --os ubuntu-22.04
+boxes verify --machine --backend qemu --to-user 2 --to-root 1 --seed 0
+```
 
 ## Concepts
 
@@ -76,10 +94,10 @@ Container recipes (all verified end-to-end):
 - **2 steps to user:** exposed `.env` → SSH foothold.
 - **1 step to user:** unauthenticated RCE → reverse shell (a legitimate
   one-step foothold, not a shortcut).
-- **1 step to root:** `sudo` misconfiguration.
+- **1 step to root:** `sudo` misconfiguration, or a SUID `find` binary.
 - **2 steps to root:** local enumeration finds a SUID binary → GTFOBins.
 
-VM recipes (QEMU, TCG-verified):
+VM recipes (QEMU-verified; TCG on this host):
 
 - `web-env-leak-creds` and `backup-creds` — credential leaks, container-verified
   and portable to the VM.
@@ -185,7 +203,8 @@ walkthrough: |
 - **Docker** (`--backend docker`, default) — fast verification proxy: target and
   attacker containers on a per-machine `--internal` network.
 - **QEMU** (`--backend qemu`) — the real product: a VM with the same
-  provisioning, plus snapshots.
+  provisioning, plus snapshots. KVM is used automatically when usable; TCG is
+  the fallback (see "VM backend").
 - **Fake** — in-memory, for unit tests.
 
 The product is always a VM. `poc.container` is a fast verification proxy; a
@@ -198,6 +217,9 @@ VM, while a VM PoC is never run on a container.
 ```bash
 # one-time Docker images (target + attacker)
 boxes image build --os ubuntu-22.04
+
+# start the provisioning proxy (needed for package-installing recipes)
+boxes proxy up
 
 # L2: one recipe in isolation
 boxes verify --recipe sudo-misconfig-privesc
@@ -225,11 +247,10 @@ actor: $u                    # target-context principal (default: attacker)
 poc_timeout: 120
 ```
 
-One recipe, no duplicates. `container` and `vm` are independent PoCs for the
-same step; a recipe with only `container` is container-verified, one with only
-`vm` is VM-verified. `verify --backend docker` skips recipes without a container
-PoC; `--backend qemu` skips recipes without a VM PoC. `verify --machine`
-requires every step to support the chosen backend.
+Exactly one of `container` or `vm` is required. A `container` PoC is the fast
+proxy and is also allowed on the VM; a `vm` PoC is VM-only. Docker skips vm-only
+recipes; QEMU accepts both. `verify --machine` requires every step to support
+the chosen backend.
 
 - `context: attacker` runs in the shared attacker container with `BOX_HOST` set
   to the target address (`target` on Docker, the tap IP on a VM). It cannot cheat
@@ -260,8 +281,9 @@ practical to inline in a shell script.
 
 `verify` keys each result on the content of everything that can change it: the
 recipe directory (yaml, scripts, assets), the grounded fixture/manifest values,
-the image ID (not just the tag), and the backend fidelity. A hit skips the
-machine entirely. Only successes are stored, so failures always retry. The cache
+the image ID (including the attacker image for VM PoCs), the apt snapshot
+date if one is pinned, and the backend fidelity. A hit skips the machine
+entirely. Only successes are stored, so failures always retry. The cache
 lives in `.boxes-cache/` (gitignored).
 
 ```bash
@@ -273,20 +295,32 @@ boxes verify --all --clear-cache  # wipe first
 
 `--jobs` parallelizes independent recipes. Chain verification is sequential
 because every step depends on the previous ones. Container timings on this host:
-13 recipes cold with 4 jobs ≈ 1–2 min (the package probe installs via the
-proxy); warm cache ≈ 0.3 s.
+13 recipes cold with 4 jobs ≈ 30 s (the package probe installs via the
+proxy); warm cache ≈ 0.5 s.
 
 ## VM backend
 
-Prerequisites: `qemu-system-x86`, `cloud-image-utils`, `libguestfs-tools`, and
-Docker (attacker-context VM PoCs use the Docker attacker container). KVM makes
-it fast; TCG works at roughly 1.5–2.5 minutes per boot. Pre-bake the base once
-(cloud-init is run once; subsequent boots skip it). This also builds the Docker
-attacker image:
+Prerequisites: `qemu-system-x86`, `qemu-utils`, `cloud-image-utils`,
+`openssh-client`, `curl`, and Docker (attacker-context VM PoCs use the Docker
+attacker container).
+
+KVM is selected automatically when `/dev/kvm` is usable and the QEMU binary
+reports the `kvm` accelerator; otherwise TCG is used. The same selection applies
+to the prebake and to runtime verification. Override it with
+`--accel auto|kvm|tcg` on `image build`/`verify`, or with
+`BOXES_QEMU_ACCEL`. An explicit `--accel kvm` fails clearly when KVM is not
+usable instead of silently falling back. On this TCG-only host a boot takes
+roughly 1.5–2.5 minutes. Pre-bake the base once (cloud-init is run once;
+subsequent boots skip it). This also builds the Docker attacker image:
 
 ```bash
+# auto: KVM if usable, otherwise TCG
 boxes image build --backend qemu --os ubuntu-22.04
 boxes verify --recipe sudo-misconfig-privesc --backend qemu
+
+# manual overrides (`--accel kvm` requires usable KVM)
+boxes image build --backend qemu --os ubuntu-22.04 --accel kvm
+BOXES_QEMU_ACCEL=tcg boxes verify --machine --backend qemu --seed 0
 ```
 
 The cloud image download is resumable (`jammy-base.img.part`), validated as a
@@ -295,8 +329,8 @@ qcow2, and checked against the current `SHA256SUMS`. The VM store defaults to
 `BOXES_VM_BASE`).
 
 Measured on a TCG-only host: pre-bake ≈ 5–9 min depending on the cloud image
-download, cold verify ≈ 2 min, warm cache ≈ 0.2 s, `savevm` ≈ 2 s,
-`loadvm` ≈ 7 s.
+download, cold verify ≈ 2–3 min, warm cache ≈ 0.5–1 s, `savevm` ≈ 2 s,
+`loadvm` ≈ 7 s. KVM hosts use KVM for both prep and verification.
 
 Snapshots (`savevm`/`loadvm`) let a provisioned VM be restored. VM verification
 takes a `pre-poc` snapshot after provisioning (and sealing), runs the PoCs, then
@@ -386,9 +420,9 @@ is brought down before PoCs. The proxy is the only egress.
 
 ```bash
 boxes proxy up        # build/start boxes-proxy, create br-provision
-boxes proxy status
+boxes proxy status    # includes a running/healthy check for :3128, :3142, :8000
 boxes proxy down
-boxes proxy clean     # also remove the cache volume
+boxes proxy clean     # also remove the Docker network, cache volume, and artifacts
 ```
 
 `boxes proxy up` builds `boxes/proxy` (apt-cacher-ng + squid + a static
@@ -436,6 +470,6 @@ The sudoers rule must allow the helper subcommands, hence `boxes net *`.
 |-------|-------|--------|
 | **P0** — symbolic generation | Facts + unification, typed predicates, recipes, bounded-length planner, `open_port` prelude, causal connectivity, two-seed manifest, lint, scaffold, per-recipe harness | **Done** |
 | **P1** — container fast path | Pluggable backend, target + attacker images, internal network, shared attacker container, provision/poc contract, assets, L2 + L3 verification, content-addressed cache, parallel jobs, real recipes | **Done** |
-| **P2** — fidelity + branching | QEMU + prebaked base + snapshots; one PoC per recipe (`poc.container` XOR `poc.vm`); pre-PoC snapshot/restore; shared-prefix DAG with one-VM verification and attacker reset; hybrid provisioning proxy (durable apt cache + squid + artifact store) with egress-only phase and seal; apt snapshot pinning; VM base checksum/resume/store overrides; proxy health/cleanup | **Done** |
+| **P2** — fidelity + branching | QEMU (KVM auto/TCG fallback) + prebaked base + snapshots; one PoC per recipe (`poc.container` XOR `poc.vm`); pre-PoC snapshot/restore; shared-prefix DAG with one-VM verification and attacker reset; hybrid provisioning proxy (durable apt cache + squid + artifact store) with egress-only phase and seal; apt snapshot pinning; VM base checksum/resume/store overrides; proxy health/cleanup | **Done** |
 | **P3** — coherence + scale | Difficulty budgets, themes, typed choices, more distros, a complete attacker toolkit | Planned |
 | **P4** — registry | Recipe registry API + client, signed recipes, sandboxed execution, per-recipe CI | Planned |

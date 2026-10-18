@@ -11,6 +11,7 @@ from pathlib import Path
 
 import yaml
 
+from . import accel as accel_mod
 from .backends import get_backend
 from .cache import Cache, machine_key
 from .harness import check_recipe
@@ -205,7 +206,15 @@ def _make_cache(args) -> Cache:
 
 
 def _prepare_backend(args):
-    backend = get_backend(args.backend)
+    if args.backend == "qemu":
+        try:
+            selected = accel_mod.resolve(getattr(args, "accel", None))
+        except ValueError as e:
+            print(str(e), file=sys.stderr)
+            return None
+        backend = get_backend("qemu", accel=selected)
+    else:
+        backend = get_backend(args.backend)
     if not backend.available():
         print(f"backend {args.backend!r} is not available", file=sys.stderr)
         if args.backend == "qemu":
@@ -246,10 +255,16 @@ def cmd_image(args) -> int:
                 file=sys.stderr,
             )
             return 2
+        try:
+            selected = accel_mod.resolve(args.accel)
+        except ValueError as e:
+            print(str(e), file=sys.stderr)
+            return 2
         res = prepare_base(
             Path(os.environ.get("BOXES_VM_STORE", str(PROJECT_ROOT / ".boxes-vm"))),
             rebuild=args.rebuild,
             base=Path(os.environ["BOXES_VM_BASE"]) if os.environ.get("BOXES_VM_BASE") else None,
+            accel=selected,
         )
         if not res.ok:
             print("VM base image prep failed:", file=sys.stderr)
@@ -303,6 +318,8 @@ def cmd_verify(args) -> int:
     backend = _prepare_backend(args)
     if backend is None:
         return 2
+    if args.backend == "qemu":
+        print(f"qemu accel={backend.accel}")
     image = image_tag(args.os)
     # QEMU targets use the VM base; attacker-context PoCs still use the Docker
     # attacker image, so include it in the cache identity for both backends.
@@ -526,6 +543,8 @@ def build_parser() -> argparse.ArgumentParser:
     ib.add_argument("--os", default="ubuntu-22.04")
     ib.add_argument("--rebuild", action="store_true")
     ib.add_argument("--backend", default="docker", choices=["docker", "qemu"])
+    ib.add_argument("--accel", choices=["auto", "kvm", "tcg"], default=None,
+                    help="QEMU acceleration (default: $BOXES_QEMU_ACCEL or auto)")
     ib.set_defaults(func=cmd_image)
 
     v = sub.add_parser("verify", help="build and verify recipes or a machine")
@@ -542,6 +561,8 @@ def build_parser() -> argparse.ArgumentParser:
     v.add_argument("--to-root", type=int, default=1, dest="to_root")
     v.add_argument("--os", default="ubuntu-22.04")
     v.add_argument("--backend", default="docker", choices=["docker", "qemu"])
+    v.add_argument("--accel", choices=["auto", "kvm", "tcg"], default=None,
+                   help="QEMU acceleration (default: $BOXES_QEMU_ACCEL or auto)")
     v.add_argument("--keep", action="store_true", help="keep the container for debugging")
     v.add_argument("--jobs", type=int, default=min(4, os.cpu_count() or 1),
                    help="parallel containers when verifying --all")

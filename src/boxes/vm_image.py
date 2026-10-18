@@ -15,6 +15,7 @@ import subprocess
 import time
 from pathlib import Path
 
+from . import accel as accel_mod
 from .backends.base import ExecResult
 
 CLOUD_URL = "https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img"
@@ -101,14 +102,16 @@ def prepare_base(
     rebuild: bool = False,
     boot_timeout: int = 600,
     base: Path | None = None,
+    accel: str | None = None,
 ) -> ExecResult:
+    selected = accel_mod.resolve(accel)
     store = Path(store)
     store.mkdir(parents=True, exist_ok=True)
     prebaked = Path(base) if base else store / "base-prebaked.qcow2"
     prebaked.parent.mkdir(parents=True, exist_ok=True)
     if prebaked.is_file() and not rebuild:
         if _valid_qcow2(prebaked):
-            return ExecResult(0, f"{prebaked} already exists", "")
+            return ExecResult(0, f"{prebaked} already exists (accel={selected})", "")
         prebaked.unlink(missing_ok=True)
 
     for tool in ("qemu-system-x86_64", "qemu-img", "cloud-localds", "ssh-keygen"):
@@ -190,8 +193,7 @@ def prepare_base(
     res = _run(
         [
             "qemu-system-x86_64",
-            "-accel", "tcg,thread=multi",
-            "-cpu", "max",
+            *accel_mod.args(selected),
             "-m", "1024", "-smp", "2",
             "-drive", f"file={work},if=virtio,format=qcow2",
             "-drive", f"file={seed},if=virtio,format=raw,readonly=on",
@@ -249,4 +251,4 @@ def prepare_base(
     shutil.move(str(work), str(prebaked))
     for path in (log, pidfile, monitor):
         Path(path).unlink(missing_ok=True)
-    return ExecResult(0, f"prepared {prebaked}", "")
+    return ExecResult(0, f"prepared {prebaked} (accel={selected})", "")

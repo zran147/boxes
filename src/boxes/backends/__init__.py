@@ -10,7 +10,7 @@ from .fake import FakeBackend
 __all__ = ["Backend", "ExecResult", "FakeBackend", "get_backend"]
 
 
-def get_backend(name: str = "docker") -> Backend:
+def get_backend(name: str = "docker", **kwargs) -> Backend:
     if name == "docker":
         from .docker import DockerBackend
 
@@ -18,7 +18,7 @@ def get_backend(name: str = "docker") -> Backend:
     if name == "qemu":
         from .qemu import QemuBackend
 
-        return QemuBackend()
+        return QemuBackend(**kwargs)
     if name == "fake":
         return FakeBackend()
     raise ValueError(f"unknown backend {name!r} (expected 'docker', 'qemu' or 'fake')")
