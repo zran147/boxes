@@ -6,7 +6,7 @@ import re
 
 from . import difficulty as difficulty_mod
 from .manifest import Manifest
-from .planner import Plan
+from .planner import Plan, common_prefix
 from .values import format_value
 
 _PLACEHOLDER = re.compile(r"\{([A-Za-z0-9_.]+)\}")
@@ -74,18 +74,9 @@ def render_markdown(plan: Plan, manifest: Manifest) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def _common_prefix(paths: list[Plan]) -> int:
-    length = 0
-    while all(len(path.steps) > length for path in paths):
-        if len({path.steps[length].instance for path in paths}) != 1:
-            break
-        length += 1
-    return length
-
-
 def render_machine_markdown(paths: list[Plan], manifests: list[Manifest]) -> str:
     first = paths[0]
-    prefix = _common_prefix(paths)
+    prefix = common_prefix(paths, manifests)
     lines: list[str] = []
     lines.append(f"# Generated machine — {first.os_name}")
     lines.append("")
@@ -160,6 +151,6 @@ def paths_to_dict(paths: list[Plan], manifests: list[Manifest]) -> dict:
         "os": paths[0].os_name,
         "base_plan_seed": paths[0].seed,
         "build_seed": manifests[0].build_seed,
-        "shared_prefix": _common_prefix(paths),
+        "shared_prefix": common_prefix(paths, manifests),
         "paths": [plan_to_dict(plan, manifest) for plan, manifest in zip(paths, manifests)],
     }

@@ -39,6 +39,7 @@ RESERVED = {
     "root", "ubuntu", "boxes", "attacker", "admin", "administrator", "www-data",
     "nobody", "daemon", "bin", "sys", "sync", "games", "man", "lp", "mail",
     "news", "uucp", "proxy", "sshd", "ftp", "ftpuser", "anonymous",
+    "backup", "list", "irc", "gnats",
     "systemd-network", "systemd-resolve", "messagebus", "_apt",
 }
 

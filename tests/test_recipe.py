@@ -5,13 +5,13 @@ import pytest
 from boxes.recipe import load_recipe
 
 
-def _write(tmp_path: Path, poc_block: str, extra: str = ""):
+def _write(tmp_path: Path, poc_block: str, extra: str = "", rid: str = "r"):
     d = tmp_path / "r"
     d.mkdir()
     (d / "provision.sh").write_text("echo provision\n")
     (d / "poc.sh").write_text("echo poc\n")
     (d / "recipe.yaml").write_text(
-        "id: r\n"
+        f"id: {rid}\n"
         "version: 1.0.0\n"
         "kind: foothold\n"
         'os: ["ubuntu-*"]\n'
@@ -80,3 +80,30 @@ def test_invalid_poc_context_is_rejected(tmp_path):
 def test_recipe_difficulty_is_a_numeric_level(tmp_path):
     r = _write(tmp_path, "poc:\n  context: attacker\n  container: ./poc.sh")
     assert r.difficulty == 2
+
+
+def test_recipe_id_must_be_path_safe(tmp_path):
+    with pytest.raises(ValueError, match="recipe id"):
+        _write(
+            tmp_path,
+            "poc:\n  context: attacker\n  container: ./poc.sh",
+            rid="../escape",
+        )
+
+
+def test_poc_cannot_escape_the_recipe_directory(tmp_path):
+    (tmp_path / "outside.sh").write_text("echo outside\n")
+    with pytest.raises(ValueError, match="inside the recipe"):
+        _write(
+            tmp_path,
+            "poc:\n  context: attacker\n  container: ../outside.sh",
+        )
+
+
+def test_assets_cannot_escape_the_recipe_directory(tmp_path):
+    with pytest.raises(ValueError, match="inside the recipe"):
+        _write(
+            tmp_path,
+            "poc:\n  context: attacker\n  container: ./poc.sh",
+            extra="assets: /etc",
+        )

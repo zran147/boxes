@@ -7,7 +7,7 @@ from boxes.manifest import generate_param
 from boxes.recipe import ParamSpec
 
 _USER = re.compile(r"^[a-z][a-z0-9_]{1,31}$")
-_RESERVED = {"root", "ubuntu", "boxes", "attacker", "www-data"}
+_RESERVED = {"root", "ubuntu", "boxes", "attacker", "www-data", "backup"}
 
 
 def test_typed_int_respects_range_and_step():

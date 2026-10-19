@@ -25,7 +25,7 @@ CACHE_VERSION = 1
 # Bump this whenever verification *semantics* change (not recipe content), e.g.
 # moving PoCs from the target to the attacker container. Without it, old cache
 # entries would wrongly survive a runner change.
-SEMANTICS_VERSION = 2
+SEMANTICS_VERSION = 4
 
 
 def _h(*parts) -> "hashlib._Hash":

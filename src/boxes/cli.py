@@ -50,7 +50,8 @@ CACHE_FILE = PROJECT_ROOT / ".boxes-cache" / "verifications.json"
 
 
 def _load_all_recipes(args) -> list:
-    recipes = load_registry(args.recipes)
+    local = Path(args.recipes)
+    recipes = load_registry(local) if local.is_dir() else []
     installed_dir = registry_client.registry_recipes()
     if installed_dir.is_dir():
         installed = load_registry(installed_dir)
@@ -62,6 +63,8 @@ def _load_all_recipes(args) -> list:
                     f"exists locally in {args.recipes}"
                 )
         recipes = recipes + installed
+    if not recipes:
+        raise FileNotFoundError(f"recipe directory not found: {local}")
     return recipes
 
 
@@ -477,6 +480,9 @@ def cmd_verify(args) -> int:
     if args.backend == "docker" and getattr(args, "sandbox", None) == "isolated":
         print("--sandbox isolated is QEMU-only", file=sys.stderr)
         return 2
+    if args.backend == "qemu" and getattr(args, "sandbox", None) == "locked":
+        print("--sandbox locked is Docker-only; use --sandbox isolated or trusted for QEMU", file=sys.stderr)
+        return 2
     from . import proxy as proxy_mod
 
     if not proxy_mod.services_ok():
@@ -492,8 +498,15 @@ def cmd_verify(args) -> int:
         print(f"qemu accel={backend.accel}")
     image = image_tag(args.os)
     # QEMU targets use the VM base; attacker-context PoCs still use the Docker
-    # attacker image, so include it in the cache identity for both backends.
-    image_id = f"{backend.image_id(image)}|{backend.image_id(attacker_image())}"
+    # attacker image, so include the real attacker image ID (not the QEMU base
+    # ID) in the cache identity.
+    if args.backend == "qemu":
+        attacker_backend = get_backend("docker")
+    else:
+        attacker_backend = backend
+    image_id = f"{backend.image_id(image)}|{attacker_backend.image_id(attacker_image())}"
+    sandbox = getattr(backend, "sandbox", "vm" if args.backend == "qemu" else "trusted")
+    image_id = f"{image_id}|sandbox={sandbox}|os={args.os}"
     if args.apt_snapshot:
         image_id = f"{image_id}|apt-snapshot={args.apt_snapshot}"
     cache = _make_cache(args)

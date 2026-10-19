@@ -94,6 +94,8 @@ def sign(body: dict, private_key: str | Path) -> dict:
 
 
 def verify(attestation: dict) -> tuple[bool, str | None]:
+    if not isinstance(attestation, dict):
+        return False, "attestation is not an object"
     signature = attestation.get("signature")
     signer = attestation.get("signer")
     expected = attestation.get("signer_fingerprint")
@@ -114,10 +116,16 @@ def verify(attestation: dict) -> tuple[bool, str | None]:
 def write(attestation: dict, directory: str | Path) -> Path:
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
-    name = "-".join(
+    parts = [
         str(attestation.get(key))
         for key in ("recipe", "version", "os", "backend", "sandbox")
-    )
+    ]
+    if any(
+        not part or "/" in part or "\\" in part or part in {".", ".."}
+        for part in parts
+    ):
+        raise ValueError(f"unsafe attestation filename component(s): {parts!r}")
+    name = "-".join(parts)
     path = directory / f"{name}.json"
     path.write_text(canonical_json(attestation).decode("utf-8") + "\n")
     return path

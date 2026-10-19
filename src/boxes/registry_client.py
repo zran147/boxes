@@ -10,11 +10,14 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import tempfile
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+import yaml
 
 from . import attest
 from .bundles import (
@@ -54,8 +57,18 @@ def project_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+_SAFE_ID = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+
+
 def registry_recipes() -> Path:
     return Path(os.environ.get("BOXES_REGISTRY_DIR", project_root() / ".boxes-registry" / "recipes"))
+
+
+def _installed_dir(recipe_id: str) -> Path:
+    """Path for an installed recipe, refusing ids that could escape the store."""
+    if not isinstance(recipe_id, str) or not _SAFE_ID.fullmatch(recipe_id):
+        raise RegistryError(f"invalid recipe id: {recipe_id!r}")
+    return registry_recipes() / recipe_id
 
 
 def lockfile() -> Path:
@@ -198,6 +211,12 @@ def add_registry(
     }
     index = fetch_index(reg)
     reg["sequence"] = int(index["sequence"])
+    matched = next(
+        (key for key in keys if key["fingerprint"] == index.get("operator")),
+        keys[0],
+    )
+    reg["operator_key"] = matched["key"]
+    reg["operator_fingerprint"] = matched["fingerprint"]
     config = load_config()
     config["registries"][name] = reg
     save_config(config)
@@ -373,6 +392,21 @@ def _verify_entry(entry: dict) -> None:
     manifest = _entry_manifest(entry)
     if bundle_hash(manifest) != entry["bundle"]:
         raise RegistryError("bundle hash does not match the manifest")
+    for value in entry_attestations(entry):
+        if not isinstance(value, dict):
+            raise RegistryError("attestation is not an object")
+        ok, error = attest.verify(value)
+        if not ok:
+            raise RegistryError(f"attestation: {error}")
+        if value.get("signer_fingerprint") != entry.get("publisher_fingerprint"):
+            raise RegistryError("attestation signer is not the publisher")
+        if (
+            value.get("recipe") != entry.get("id")
+            or value.get("version") != entry.get("version")
+            or value.get("files") != entry.get("files")
+            or value.get("result") != "pass"
+        ):
+            raise RegistryError("attestation does not match the bundle")
 
 
 def install(
@@ -390,7 +424,7 @@ def install(
     if require_attestation and not entry_attestations(entry):
         raise RegistryError(f"{entry['id']}@{entry['version']} has no attestation")
 
-    installed = registry_recipes() / entry["id"]
+    installed = _installed_dir(entry["id"])
     old = next((item for item in lock["recipes"] if item["id"] == entry["id"]), None)
     if (
         not force
@@ -399,6 +433,10 @@ def install(
         and installed.is_dir()
     ):
         if file_hashes(installed) == entry["files"]:
+            attestations = entry_attestations(entry)
+            if old.get("attestations") != attestations:
+                old["attestations"] = attestations
+                save_lock(lock)
             return entry
         raise RegistryError(
             f"{entry['id']} is installed but its files differ from the bundle; use --force"
@@ -428,6 +466,17 @@ def install(
             or manifest.get("publisher") != entry["publisher"]
         ):
             raise RegistryError("bundle metadata does not match the index")
+        try:
+            recipe = load_recipe(extract_to / "recipe.yaml")
+        except (OSError, ValueError) as e:
+            raise RegistryError(f"bundle recipe does not load: {e}") from e
+        if recipe.id != entry["id"] or recipe.version != entry["version"]:
+            raise RegistryError("bundle recipe metadata does not match the index")
+        for value in entry_attestations(entry):
+            if value.get("os") and not recipe.applies_to(value["os"]):
+                raise RegistryError(
+                    f"attestation OS {value['os']!r} does not apply to {recipe.id}"
+                )
         if installed.exists():
             shutil.rmtree(installed)
         installed.parent.mkdir(parents=True, exist_ok=True)
@@ -478,6 +527,7 @@ def update(
 ) -> list[dict]:
     lock = load_lock()
     changed = []
+    metadata_updates: dict[str, list[dict]] = {}
     for item in list(lock["recipes"]):
         if registry_name is not None and item["registry"] != registry_name:
             continue
@@ -487,17 +537,34 @@ def update(
         _remember_sequence(name, index)
         entry = resolve(index, item["id"])
         if entry["bundle"] == item["bundle"]:
+            _verify_entry(entry)
+            attestations = entry_attestations(entry)
+            if require_attestation and not attestations:
+                raise RegistryError(
+                    f"{entry['id']}@{entry['version']} has no attestation"
+                )
+            if item.get("attestations") != attestations:
+                metadata_updates[item["id"]] = attestations
+                changed.append(entry)
             continue
         install(
             item["id"], registry_name=name, force=True,
             require_attestation=require_attestation,
         )
         changed.append(entry)
+    if metadata_updates:
+        # install() may have written the lock in the meantime, so reload before
+        # applying metadata-only changes.
+        lock = load_lock()
+        for item in lock["recipes"]:
+            if item["id"] in metadata_updates:
+                item["attestations"] = metadata_updates[item["id"]]
+        save_lock(lock)
     return changed
 
 
 def uninstall(recipe_id: str) -> None:
-    installed = registry_recipes() / recipe_id
+    installed = _installed_dir(recipe_id)
     lock = load_lock()
     before = len(lock["recipes"])
     lock["recipes"] = [item for item in lock["recipes"] if item["id"] != recipe_id]
@@ -512,11 +579,15 @@ def verify_installed(offline: bool = False) -> list[dict]:
     lock = load_lock()
     results = []
     for item in lock["recipes"]:
-        installed = registry_recipes() / item["id"]
         errors: list[str] = []
-        if not installed.is_dir():
+        try:
+            installed = _installed_dir(item["id"])
+        except RegistryError as e:
+            errors.append(str(e))
+            installed = None
+        if installed is not None and not installed.is_dir():
             errors.append("installed directory is missing")
-        else:
+        elif installed is not None:
             actual = file_hashes(installed)
             expected = item.get("files", {})
             if actual != expected:
@@ -529,6 +600,22 @@ def verify_installed(offline: bool = False) -> list[dict]:
                 errors.append(
                     f"files differ (missing={missing}, extra={extra}, changed={changed})"
                 )
+            try:
+                recipe = load_recipe(installed / "recipe.yaml")
+            except (OSError, ValueError, yaml.YAMLError) as e:
+                errors.append(f"recipe does not load: {e}")
+            else:
+                if recipe.id != item["id"] or recipe.version != item["version"]:
+                    errors.append("installed recipe metadata differs from the lock")
+                for value in entry_attestations(item):
+                    if (
+                        isinstance(value, dict)
+                        and value.get("os")
+                        and not recipe.applies_to(value["os"])
+                    ):
+                        errors.append(
+                            f"attestation OS {value['os']!r} does not apply"
+                        )
         if bundle_hash(_entry_manifest(item)) != item["bundle"]:
             errors.append("lock manifest hash mismatch")
         try:
@@ -537,6 +624,9 @@ def verify_installed(offline: bool = False) -> list[dict]:
             errors.append(str(e))
         attestations = entry_attestations(item)
         for attestation in attestations:
+            if not isinstance(attestation, dict):
+                errors.append("attestation is not an object")
+                continue
             ok, error = attest.verify(attestation)
             if not ok:
                 errors.append(f"attestation: {error}")
@@ -577,7 +667,7 @@ def verify_installed(offline: bool = False) -> list[dict]:
                             errors.append(f"registry index {field} differs from the lock")
                     if indexed.get("files") != item.get("files"):
                         errors.append("registry index file hashes differ from the lock")
-                    if indexed.get("attestations") != item.get("attestations"):
+                    if entry_attestations(indexed) != item.get("attestations"):
                         errors.append("registry index attestations differ from the lock")
             except RegistryError as e:
                 errors.append(str(e))
@@ -626,6 +716,8 @@ def publish(
         signature = existing.pop("signature", None)
         if not signature or not verify_json(operator_public, existing, signature):
             raise RegistryError("existing index was not signed by this operator key")
+        if fingerprint(publisher_public) in existing.get("revoked_publishers", []):
+            raise RegistryError("publisher key is revoked")
         sequence = int(existing.get("sequence", 0)) + 1
         entries = list(existing.get("recipes", []))
         revoked_publishers = list(existing.get("revoked_publishers", []))
@@ -639,8 +731,11 @@ def publish(
     with tempfile.TemporaryDirectory(dir=str(out)) as tmp:
         tar_path = Path(tmp) / "bundle.tar.gz"
         manifest, digest, tar_sha = build_bundle(recipe_dir, publisher, tar_path)
+        data = tar_path.read_bytes()
         target = out / "bundles" / f"{digest}.tar.gz"
-        target.write_bytes(tar_path.read_bytes())
+    if digest in revoked_bundles:
+        raise RegistryError("bundle is revoked")
+    target.write_bytes(data)
     size = target.stat().st_size
 
     if attestation_path is None:
@@ -666,6 +761,10 @@ def publish(
             raise RegistryError("attestation files do not match the bundle")
         if value.get("result") != "pass":
             raise RegistryError("attestation result is not pass")
+        if value.get("os") and not recipe.applies_to(value["os"]):
+            raise RegistryError(
+                f"attestation OS {value['os']!r} does not apply to {recipe.id}"
+            )
         attestations.append(value)
 
     same = [

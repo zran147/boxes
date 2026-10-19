@@ -76,6 +76,37 @@ def initial_state(os_name: str) -> list[Fact]:
     return [Fact("os", (os_name,)), Fact("host", (TARGET,))]
 
 
+def common_prefix(paths: list[Plan], manifests: list | None = None) -> int:
+    """Number of leading steps shared by every path.
+
+    Instances alone are not enough: independent fallback paths can reuse the
+    same recipe at the same position while binding its variables differently.
+    When manifests are supplied, their grounded prefix contexts must match too;
+    a branch can constrain a prefix variable and change what was provisioned.
+    """
+    def identity(step: Step, manifest) -> tuple:
+        binding = tuple(
+            sorted((name, repr(value)) for name, value in step.subst.items())
+        )
+        if manifest is None:
+            return (step.instance, binding)
+        context = tuple(
+            sorted((name, repr(value)) for name, value in manifest.step_context(step).items())
+        )
+        return (step.instance, binding, context)
+
+    length = 0
+    while all(len(path.steps) > length for path in paths):
+        values = {
+            identity(path.steps[length], manifests[index] if manifests else None)
+            for index, path in enumerate(paths)
+        }
+        if len(values) != 1:
+            break
+        length += 1
+    return length
+
+
 def _candidate_facts(pat: Fact, state: list[Fact]) -> list[Fact]:
     """Facts in ``state`` that could satisfy ``pat`` (incl. assumed ports)."""
     out = [f for f in state if unify_fact(pat, f, {}) is not None]

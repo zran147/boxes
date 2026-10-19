@@ -115,7 +115,7 @@ def check_recipe(recipe: Recipe, seed: int = 0, os_name: str | None = None) -> R
     result = Result(recipe_id=recipe.id)
     rng = Random(seed)
 
-    if not _ID.match(recipe.id):
+    if not _ID.fullmatch(recipe.id):
         result.errors.append(f"recipe id must match {_ID.pattern!r}")
     if not recipe.provides:
         result.errors.append("recipe must declare at least one provides fact")

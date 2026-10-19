@@ -6,8 +6,15 @@ from boxes.backends import FakeBackend
 from boxes.backends.base import ExecResult
 from boxes.facts import parse_fact
 from boxes.harness import Fixture
+from boxes.planner import Plan, Step, common_prefix
 from boxes.recipe import Recipe
-from boxes.runner import build_env, resolve_actor, verify_machine, verify_paths, verify_recipe
+from boxes.runner import (
+    build_env,
+    resolve_actor,
+    verify_machine,
+    verify_paths,
+    verify_recipe,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -420,3 +427,28 @@ def test_apt_snapshot_rewrites_the_sources(tmp_path, monkeypatch):
     assert any("Acquire::https::Proxy::snapshot.ubuntu.com" in s for s in scripts)
     assert any("Acquire::Check-Valid-Until" in s for s in scripts)
     assert any("apt-get update" in s for s in scripts)
+
+
+def test_common_prefix_requires_matching_bindings():
+    recipe = Recipe(
+        id="r", version="1.0.0", kind="discovery", os=["ubuntu-*"], difficulty=1,
+        requires=[parse_fact("open_port($h, 80)")],
+        provides=[parse_fact("knows(a, $u)")], yields=[], params={},
+        walkthrough="", provision="p.sh", poc="q.sh", poc_backend="container",
+    )
+    first = Step(recipe, "r#0", {"u": "alice"}, [], [])
+    other = Step(recipe, "r#0", {"u": "bob"}, [], [])
+    a = Plan("ubuntu-22.04", [first], 0)
+    b = Plan("ubuntu-22.04", [other], 0)
+    assert common_prefix([a, b]) == 0
+
+    class Context:
+        def __init__(self, value):
+            self.value = value
+
+        def step_context(self, step):
+            return {"u": self.value}
+
+    c = Plan("ubuntu-22.04", [Step(recipe, "r#0", {}, [], [])], 0)
+    d = Plan("ubuntu-22.04", [Step(recipe, "r#0", {}, [], [])], 0)
+    assert common_prefix([c, d], [Context("alice"), Context("bob")]) == 0

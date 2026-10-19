@@ -17,6 +17,25 @@ GOALS = {"user", "root"}
 PARAM_TYPES = {"choice", "password", "token", "int", "bool", "username"}
 
 _SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
+_ID = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+
+
+def _confined(base_dir: Path, value: object, what: str) -> Path:
+    """Resolve a recipe path and require it to stay inside the recipe dir.
+
+    Registry recipes are untrusted. Absolute paths and ``..`` must not let a
+    bundle read host files or write outside its install directory.
+    """
+    rel = Path(str(value))
+    if rel.is_absolute() or ".." in rel.parts:
+        raise ValueError(f"{what} must be a relative path inside the recipe: {value!r}")
+    root = base_dir.resolve()
+    target = (base_dir / rel).resolve()
+    try:
+        target.relative_to(root)
+    except ValueError as e:
+        raise ValueError(f"{what} escapes the recipe directory: {value!r}") from e
+    return target
 
 
 @dataclass
@@ -60,6 +79,8 @@ class Recipe:
 
     def __post_init__(self) -> None:
         self.difficulty = normalize_difficulty(self.difficulty)
+        if not isinstance(self.id, str) or not _ID.fullmatch(self.id):
+            raise ValueError(f"recipe id must match {_ID.pattern!r}, got {self.id!r}")
 
     def applies_to(self, os_name: str) -> bool:
         from fnmatch import fnmatch
@@ -112,6 +133,8 @@ def load_recipe(path: Path) -> Recipe:
         raise ValueError(f"{path}: recipe file must be a mapping")
 
     rid = data.get("id") or path.parent.name
+    if not isinstance(rid, str) or not _ID.fullmatch(rid):
+        raise ValueError(f"recipe id must match {_ID.pattern!r}, got {rid!r}")
     version = str(data.get("version", ""))
     if not _SEMVER.match(version):
         raise ValueError(f"{rid}: version must be semver (x.y.z), got {version!r}")
@@ -226,9 +249,11 @@ def load_recipe(path: Path) -> Recipe:
 
     if (poc is None) != (provision is None):
         raise ValueError(f"{rid}: provision and poc must be provided together")
-    if poc is not None and not (base_dir / poc).is_file():
+    if poc is not None and not _confined(base_dir, poc, f"{rid}: poc").is_file():
         raise ValueError(f"{rid}: poc script not found: {base_dir / poc}")
-    if provision is not None and not (base_dir / str(provision)).is_file():
+    if provision is not None and not _confined(
+        base_dir, provision, f"{rid}: provision"
+    ).is_file():
         raise ValueError(f"{rid}: provision script not found: {base_dir / str(provision)}")
     poc_timeout = int(data.get("poc_timeout", 120))
     if poc_timeout <= 0:
@@ -240,7 +265,9 @@ def load_recipe(path: Path) -> Recipe:
     assets = data.get("assets")
     if assets is None and (base_dir / "files").is_dir():
         assets = "./files"
-    if assets is not None and not (base_dir / str(assets)).is_dir():
+    if assets is not None and not _confined(
+        base_dir, assets, f"{rid}: assets"
+    ).is_dir():
         raise ValueError(f"{rid}: assets directory not found: {base_dir / str(assets)}")
 
     return Recipe(

@@ -25,6 +25,17 @@ def test_qemu_backend_is_unavailable_without_a_key(tmp_path):
     assert not backend.available()
 
 
+def test_qemu_image_id_does_not_collide_across_os_stores(tmp_path):
+    ids = []
+    for name in ("ubuntu-22.04", "debian-12"):
+        base = tmp_path / name / "base-prebaked.qcow2"
+        base.parent.mkdir(parents=True)
+        base.write_bytes(b"same-size")
+        backend = QemuBackend(store=base.parent, base=base, key=tmp_path / "missing")
+        ids.append(backend.image_id("ignored"))
+    assert ids[0] != ids[1]
+
+
 def test_qemu_backend_uses_a_per_os_store(monkeypatch, tmp_path):
     monkeypatch.setenv("BOXES_VM_STORE", str(tmp_path))
     backend = QemuBackend(os_name="debian-12")

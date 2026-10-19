@@ -416,9 +416,10 @@ practical to inline in a shell script.
 
 `verify` keys each result on the content of everything that can change it: the
 recipe directory (yaml, scripts, assets), the grounded fixture/manifest values,
-the image ID (including the attacker image for VM PoCs), the apt snapshot
-date if one is pinned, and the backend fidelity. A hit skips the machine
-entirely. Only successes are stored, so failures always retry. The cache
+the OS, the target and attacker image IDs for VM PoCs, the sandbox profile
+(trusted/locked/isolated), the apt snapshot date if one is pinned, and the
+backend fidelity. A hit skips the machine entirely. Only successes are stored,
+so failures always retry. The cache
 lives in `.boxes-cache/` (gitignored).
 
 ```bash
@@ -554,18 +555,25 @@ give a QEMU wrapper `cap_net_admin` or pass the tap fd from the helper.
 
 Targets get **no direct internet**. During provisioning a VM gets an extra NIC
 on the shared `br-provision` bridge, where the proxy container lives; that NIC
-is brought down before PoCs. The proxy is the only egress.
+is brought down before PoCs. Containers use the internal `boxes-provision`
+network. The proxy is the only egress, through a separate `boxes-egress`
+network.
 
 ```bash
 boxes proxy up        # build/start boxes-proxy, create br-provision
 boxes proxy status    # includes a running/healthy check for :3128, :3142, :8000
 boxes proxy down
-boxes proxy clean     # also remove the Docker network, cache volume, and artifacts
+boxes proxy clean     # also remove the Docker networks, cache volume, and artifacts
 ```
 
+The target-facing network is `--internal`; egress is a separate `boxes-egress`
+network attached only to the proxy. If upgrading a pre-internal setup and the
+old network still has containers attached, run `boxes proxy clean` once.
+
 `boxes proxy up` builds `boxes/proxy` (apt-cacher-ng + squid + a static
-artifact server), starts `boxes-proxy` on the `boxes-provision` Docker network,
-and attaches it to `br-provision` at `10.67.0.2`. Provisioning receives:
+artifact server), starts `boxes-proxy` on the internal `boxes-provision` Docker
+network, attaches it to `br-provision` at `10.67.0.2`, and then gives it
+internet access through `boxes-egress`. Provisioning receives:
 
 - `BOX_PROXY_URL` plus `http_proxy`/`https_proxy` at
   `http://10.67.0.2:3128` (or `http://boxes-proxy:3128` for containers);
@@ -717,9 +725,11 @@ scripts/registry-ci.sh RECIPE_DIR REGISTRY_DIR PUBLISHER PRIVATE_KEY \
     OPERATOR_KEY "ubuntu-22.04 debian-12 ubuntu-24.04"
 ```
 
-It runs lint, the harness, locked verification for each OS, signs one
-attestation per OS, and publishes the bundle with all of them. Run
-`boxes proxy up` first.
+It runs lint, the harness, locked Docker (container PoC) or QEMU (VM PoC)
+verification for each OS, signs one attestation per OS, and publishes the
+bundle with all of them. Target-context VM PoCs use the isolated QEMU profile;
+attacker-context VM PoCs need the trusted profile and its network helper. Run
+`boxes proxy up` first, and pre-bake the VM base for VM-PoC recipes.
 
 ### Serving a registry (HTTP API)
 

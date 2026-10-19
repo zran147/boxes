@@ -1,6 +1,7 @@
 import functools
 import shutil
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
@@ -37,6 +38,7 @@ def api(tmp_path, monkeypatch):
     server.registry_dir = registry
     server.operator_key = keys["private"]
     server.trusted_publishers = None
+    server.registry_lock = threading.Lock()
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     url = f"http://127.0.0.1:{server.server_address[1]}"
@@ -103,3 +105,28 @@ def test_api_rejects_an_untrusted_publisher(api):
         registry_client.publish_api(
             api.url, api.source, "tester", api.keys["private"], attestation
         )
+
+
+def test_concurrent_publishes_keep_both_entries(api):
+    source2 = api.tmp_path / "src" / "api-test-2"
+    shutil.copytree(RECIPES / "web-env-leak-creds", source2)
+    yaml = source2 / "recipe.yaml"
+    yaml.write_text(yaml.read_text().replace("id: web-env-leak-creds", "id: api-test-2"))
+    att1 = _attestation(api.source, api.keys["private"], api.tmp_path / "a1")
+    att2 = _attestation(source2, api.keys["private"], api.tmp_path / "a2")
+
+    def one(source, att):
+        return registry_client.publish_api(
+            api.url, source, "tester", api.keys["private"], att
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        list(pool.map(lambda args: one(*args), [(api.source, att1), (source2, att2)]))
+
+    registry_client.add_registry("api", api.url, api.keys["public"])
+    index = registry_client.fetch_index(
+        registry_client.load_config()["registries"]["api"]
+    )
+    ids = {entry["id"] for entry in index["recipes"]}
+    assert ids == {"api-test", "api-test-2"}
+    assert index["sequence"] == 2

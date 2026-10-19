@@ -202,6 +202,37 @@ def test_publish_and_install_with_attestation(reg, tmp_path):
     assert checked[0]["attested"] is True
 
 
+def test_update_refreshes_attestations_without_a_new_bundle(reg, tmp_path):
+    from boxes import attest
+    from boxes.recipe import load_recipe
+    from boxes.runner import StepResult, VerifyResult
+
+    entry = registry_client.install("reg-test")
+    assert entry["attestations"] == []
+
+    recipe = load_recipe(reg.source / "recipe.yaml")
+    result = VerifyResult(label=recipe.id)
+    result.add(StepResult(recipe.id, "provision", True, 0, ""))
+    result.add(StepResult(recipe.id, "poc", True, 0, ""))
+    body = attest.build(
+        recipe, result, image_id="img", os_name="ubuntu-22.04",
+        backend="container", sandbox="locked",
+        started_at="a", finished_at="b",
+    )
+    path = attest.write(
+        attest.sign(body, reg.keys["private"]), tmp_path / "att"
+    )
+    registry_client.publish(
+        reg.source, reg.registry, "tester", reg.keys["private"],
+        attestation_path=path,
+    )
+
+    changed = registry_client.update()
+    assert changed and changed[0]["id"] == "reg-test"
+    assert registry_client.load_lock()["recipes"][0]["attestations"]
+    assert registry_client.verify_installed()[0]["errors"] == []
+
+
 def test_attestation_must_match_bundle(reg, tmp_path):
     from boxes import attest
     from boxes.recipe import load_recipe
@@ -310,3 +341,45 @@ def test_operator_key_rotation(reg):
         signing.load_public(new["public"])
     )
     assert registry_client.verify_installed()[0]["errors"] == []
+
+
+def test_add_registry_selects_the_signing_operator_key(reg):
+    from boxes import signing
+
+    new = signing.keygen(reg.tmp_path / "keys" / "new")
+    registry_client.rotate(reg.registry, reg.keys["private"], new["private"])
+    registry_client.add_registry(
+        "test", reg.registry, [reg.keys["public"], new["public"]]
+    )
+    cfg = registry_client.load_config()["registries"]["test"]
+    assert cfg["operator_fingerprint"] == signing.fingerprint(
+        signing.load_public(new["public"])
+    )
+
+
+def test_installed_recipe_id_cannot_escape_the_store(reg):
+    with pytest.raises(registry_client.RegistryError, match="invalid recipe id"):
+        registry_client.uninstall("../escape")
+
+
+def test_revoked_publisher_cannot_publish(reg):
+    entry = registry_client.install("reg-test")
+    registry_client.revoke(
+        reg.registry, reg.keys["private"],
+        publisher=entry["publisher_fingerprint"],
+    )
+    with pytest.raises(registry_client.RegistryError, match="revoked"):
+        registry_client.publish(
+            reg.source, reg.registry, "tester", reg.keys["private"]
+        )
+
+
+def test_revoked_bundle_cannot_be_republished(reg):
+    entry = registry_client.install("reg-test")
+    registry_client.revoke(
+        reg.registry, reg.keys["private"], bundle=entry["bundle"]
+    )
+    with pytest.raises(registry_client.RegistryError, match="revoked"):
+        registry_client.publish(
+            reg.source, reg.registry, "tester", reg.keys["private"]
+        )

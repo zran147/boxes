@@ -174,9 +174,11 @@ def provision_up(proxy_pid: int) -> dict:
     _run(["ip", "link", "set", PROVISION_VETH, "master", PROVISION_BR])
     _run(["ip", "link", "set", PROVISION_VETH, "up"])
     _run(["ip", "link", "set", PROVISION_VETH_C, "netns", str(pid)])
-    _run(["nsenter", "-t", str(pid), "-n", "ip", "link", "set", PROVISION_VETH_C, "name", "eth1"])
-    _run(["nsenter", "-t", str(pid), "-n", "ip", "addr", "replace", f"{PROVISION_IP}/24", "dev", "eth1"])
-    _run(["nsenter", "-t", str(pid), "-n", "ip", "link", "set", "eth1", "up"])
+    # Do not use eth1: Docker may later attach the egress network and choose
+    # the next free ethN name itself. A stable non-eth name avoids conflicts.
+    _run(["nsenter", "-t", str(pid), "-n", "ip", "link", "set", PROVISION_VETH_C, "name", "prov0"])
+    _run(["nsenter", "-t", str(pid), "-n", "ip", "addr", "replace", f"{PROVISION_IP}/24", "dev", "prov0"])
+    _run(["nsenter", "-t", str(pid), "-n", "ip", "link", "set", "prov0", "up"])
     return {"bridge": PROVISION_BR, "veth": PROVISION_VETH, "proxy_ip": PROVISION_IP}
 
 

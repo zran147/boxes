@@ -120,7 +120,7 @@ def create_recipe(
     os_patterns: list[str] | None = None,
     difficulty: str = "medium",
 ) -> Path:
-    if not _ID.match(rid):
+    if not _ID.fullmatch(rid):
         raise ValueError(f"recipe id must match {_ID.pattern!r}, got {rid!r}")
     if kind not in _TEMPLATES:
         raise ValueError(f"kind must be one of {sorted(_TEMPLATES)}, got {kind!r}")

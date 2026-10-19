@@ -1,5 +1,7 @@
 import copy
 
+import pytest
+
 from boxes import attest, signing
 from boxes.recipe import load_recipe
 from boxes.runner import StepResult, VerifyResult
@@ -44,6 +46,20 @@ def test_build_sign_verify_attestation(tmp_path):
     ok, error = attest.verify(tampered)
     assert not ok
     assert "signature" in error
+
+
+def test_attestation_filename_cannot_escape_the_directory(tmp_path):
+    with pytest.raises(ValueError, match="unsafe"):
+        attest.write(
+            {
+                "recipe": "../escape",
+                "version": "1.0.0",
+                "os": "ubuntu-22.04",
+                "backend": "container",
+                "sandbox": "locked",
+            },
+            tmp_path / "attestations",
+        )
 
 
 def test_attestation_signer_fingerprint_is_checked(tmp_path):

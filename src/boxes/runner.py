@@ -28,7 +28,7 @@ from .backends.base import Backend, ExecResult
 from .cache import Cache, recipe_key
 from .images import attacker_image
 from .manifest import Manifest
-from .planner import Plan
+from .planner import Plan, common_prefix
 from .proxy import APT_PROXY_PORT, ARTIFACT_PORT, PROXY_IP, PROXY_PORT
 from .values import format_value
 from . import proxy as proxy_mod
@@ -588,7 +588,7 @@ def verify_paths(
         failed.error = err
         return [failed for _ in paths]
 
-    prefix_len = _common_prefix(paths)
+    prefix_len = common_prefix(paths, manifests)
     results = [VerifyResult(label=f"path seed={p.seed}") for p in paths]
     try:
         _configure_apt(backend, setup, results[0])
@@ -691,16 +691,6 @@ def verify_paths(
     finally:
         _teardown(backend, setup, keep)
     return results
-
-
-def _common_prefix(paths: list[Plan]) -> int:
-    """Number of leading steps that are the same instances across all paths."""
-    length = 0
-    while all(len(path.steps) > length for path in paths):
-        if len({path.steps[length].instance for path in paths}) != 1:
-            break
-        length += 1
-    return length
 
 
 def verify_recipes(

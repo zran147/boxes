@@ -1,4 +1,11 @@
+import shutil
+from pathlib import Path
+from types import SimpleNamespace
+
+from boxes import cli
 from boxes.cli import main
+
+RECIPES = Path(__file__).resolve().parents[1] / "recipes"
 
 
 def test_multi_path_needs_at_least_two(capsys):
@@ -83,3 +90,28 @@ def test_attestation_dir_requires_key(capsys):
 def test_sandbox_isolated_is_qemu_only(capsys):
     assert main(["verify", "--backend", "docker", "--sandbox", "isolated", "--recipe", "x"]) == 2
     assert "QEMU-only" in capsys.readouterr().err
+
+
+def test_locked_is_docker_only(capsys):
+    assert main(["verify", "--backend", "qemu", "--sandbox", "locked", "--recipe", "x"]) == 2
+    assert "Docker-only" in capsys.readouterr().err
+
+
+def test_registry_only_project_loads_installed_recipes(tmp_path, monkeypatch):
+    installed = tmp_path / "installed"
+    shutil.copytree(
+        RECIPES / "web-env-leak-creds", installed / "web-env-leak-creds"
+    )
+    monkeypatch.setenv("BOXES_REGISTRY_DIR", str(installed))
+    args = SimpleNamespace(recipes=str(tmp_path / "missing-local-recipes"))
+    recipes = cli._load_all_recipes(args)
+    assert [recipe.id for recipe in recipes] == ["web-env-leak-creds"]
+
+
+def test_missing_recipe_directories_are_reported(tmp_path, monkeypatch):
+    monkeypatch.setenv("BOXES_REGISTRY_DIR", str(tmp_path / "empty-installed"))
+    args = SimpleNamespace(recipes=str(tmp_path / "missing-local-recipes"))
+    import pytest
+
+    with pytest.raises(FileNotFoundError):
+        cli._load_all_recipes(args)

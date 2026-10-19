@@ -19,6 +19,9 @@ from .signing import canonical_json
 
 SCHEMA = 1
 MANIFEST_NAME = "bundle.json"
+MAX_FILES = 4096
+MAX_FILE_BYTES = 64 * 1024 * 1024
+MAX_TOTAL_BYTES = 256 * 1024 * 1024
 _IGNORED_PARTS = {"__pycache__", ".git", ".boxes-cache"}
 _IGNORED_SUFFIXES = {".pyc", ".pyo"}
 
@@ -103,13 +106,22 @@ def build_bundle(recipe_dir: Path, publisher: str, out_path: Path) -> tuple[dict
 def read_bundle(path: Path) -> tuple[dict, dict[str, bytes]]:
     path = Path(path)
     with tarfile.open(path, "r:gz") as tar:
+        headers = tar.getmembers()
+        if len(headers) > MAX_FILES:
+            raise ValueError(f"bundle contains too many files ({len(headers)})")
         members = {}
-        for member in tar.getmembers():
+        total = 0
+        for member in headers:
             if not member.isfile():
                 raise ValueError(f"bundle contains a non-regular file: {member.name}")
             name = member.name
             if name.startswith("/") or ".." in Path(name).parts:
                 raise ValueError(f"unsafe bundle path: {name}")
+            if member.size < 0 or member.size > MAX_FILE_BYTES:
+                raise ValueError(f"bundle file is too large: {name}")
+            total += member.size
+            if total > MAX_TOTAL_BYTES:
+                raise ValueError("bundle expands to too much data")
             members[name] = tar.extractfile(member).read()
     if MANIFEST_NAME not in members:
         raise ValueError("bundle is missing bundle.json")

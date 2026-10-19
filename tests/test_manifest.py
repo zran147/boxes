@@ -2,8 +2,8 @@ import random
 from pathlib import Path
 
 from boxes.manifest import derive_seed, generate_param, materialize
-from boxes.planner import generate
-from boxes.recipe import ParamSpec
+from boxes.planner import Plan, Step, generate
+from boxes.recipe import ParamSpec, Recipe
 from boxes.registry import load_registry, select
 
 RECIPES = Path(__file__).resolve().parents[1] / "recipes"
@@ -42,6 +42,18 @@ def test_plan_seed_reproduces_the_chain():
     a = generate(_pool(), OS, 3, 2, 7)
     b = generate(_pool(), OS, 3, 2, 7)
     assert [s.recipe.id for s in a.steps] == [s.recipe.id for s in b.steps]
+
+
+def test_generated_username_avoids_a_fixed_username():
+    recipe = Recipe(
+        id="r", version="1.0.0", kind="discovery", os=["ubuntu-*"], difficulty=1,
+        requires=[], provides=[], yields=[], walkthrough="",
+        params={"u": ParamSpec("u", "username", styles=["role"])},
+    )
+    fixed = Step(recipe, "r#0", {"u": "backup"}, [], [])
+    generated = Step(recipe, "r#1", {}, [], [])
+    manifest = materialize(Plan(OS, [fixed, generated], 0), 0)
+    assert manifest.value_of("r#1.u") != "backup"
 
 
 def test_plan_variables_are_numbered_per_step():

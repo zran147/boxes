@@ -12,6 +12,7 @@ import functools
 import hashlib
 import json
 import tempfile
+import threading
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -93,6 +94,11 @@ def publish(
             recipe = load_recipe(extract / "recipe.yaml")
         except ValueError as e:
             raise PublishError(f"recipe does not load: {e}") from e
+        for attestation in attestations:
+            if attestation.get("os") and not recipe.applies_to(attestation["os"]):
+                raise PublishError(
+                    f"attestation OS {attestation['os']!r} does not apply", status=403
+                )
         errors = lint([recipe])
         if not recipe.verifiable:
             errors.append(f"{recipe.id}: registry recipes need provision+poc")
@@ -107,8 +113,6 @@ def publish(
     directory = Path(registry_dir)
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "bundles").mkdir(exist_ok=True)
-    target = directory / "bundles" / f"{digest}.tar.gz"
-    target.write_bytes(data)
 
     operator_private = signing.load_private(operator_key)
     operator_public = operator_private.public_key()
@@ -120,15 +124,22 @@ def publish(
             operator_public, index, index_signature
         ):
             raise PublishError("existing index was not signed by this operator key", 403)
+        if fingerprint in index.get("revoked_publishers", []):
+            raise PublishError("publisher key is revoked", status=403)
         sequence = int(index.get("sequence", 0)) + 1
         entries = list(index.get("recipes", []))
         revoked_publishers = list(index.get("revoked_publishers", []))
         revoked_bundles = list(index.get("revoked_bundles", []))
+        if digest in revoked_bundles:
+            raise PublishError("bundle is revoked", status=403)
     else:
         sequence = 1
         entries = []
         revoked_publishers = []
         revoked_bundles = []
+
+    target = directory / "bundles" / f"{digest}.tar.gz"
+    target.write_bytes(data)
 
     new_entry = {
         "id": recipe.id,
@@ -208,12 +219,13 @@ class RegistryHandler(SimpleHTTPRequestHandler):
             if length <= 0 or length > 64 * 1024 * 1024:
                 raise PublishError("invalid request size")
             payload = json.loads(self.rfile.read(length))
-            result = publish(
-                self.server.registry_dir,
-                self.server.operator_key,
-                payload,
-                self.server.trusted_publishers,
-            )
+            with self.server.registry_lock:
+                result = publish(
+                    self.server.registry_dir,
+                    self.server.operator_key,
+                    payload,
+                    self.server.trusted_publishers,
+                )
         except PublishError as e:
             self._json(e.status, {"error": str(e)})
         except Exception as e:  # noqa: BLE001
@@ -236,6 +248,7 @@ def serve(
     server.registry_dir = directory
     server.operator_key = operator_key
     server.trusted_publishers = trusted_publishers
+    server.registry_lock = threading.Lock()
     try:
         server.serve_forever()
     finally:

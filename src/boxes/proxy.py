@@ -1,8 +1,9 @@
 """Package proxy / cache lifecycle.
 
 The proxy is a long-lived container with a persistent cache. Targets reach it
-on the shared `br-provision` bridge (VMs) or the `boxes-provision` Docker
-network (containers); only the proxy has egress.
+on the shared `br-provision` bridge (VMs) or the internal `boxes-provision`
+Docker network (containers); only the proxy has egress, through a separate
+`boxes-egress` network.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from .images import PROJECT_ROOT
 IMAGE = "boxes/proxy:latest"
 CONTAINER = "boxes-proxy"
 NETWORK = "boxes-provision"
+EGRESS_NETWORK = "boxes-egress"
 CACHE_VOLUME = "boxes-proxy-cache"
 PROXY_IP = "10.67.0.2"
 PROXY_PORT = 3128
@@ -86,12 +88,34 @@ def up(rebuild: bool = False) -> ExecResult:
         if not res.ok:
             return res
 
-    if not _run(["docker", "network", "inspect", NETWORK], timeout=30).ok:
-        res = _run(["docker", "network", "create", NETWORK], timeout=60)
+    # The target-facing network must be internal: containers may reach the
+    # proxy, but no route to the internet except through the proxy.
+    _run(["docker", "rm", "-f", CONTAINER], timeout=60)
+    inspected = _run(
+        ["docker", "network", "inspect", "-f", "{{.Internal}}", NETWORK],
+        timeout=30,
+    )
+    if inspected.ok:
+        if inspected.stdout.strip() != "true":
+            removed = _run(["docker", "network", "rm", NETWORK], timeout=60)
+            if not removed.ok:
+                return ExecResult(
+                    1, "",
+                    f"existing Docker network {NETWORK} is not internal and has "
+                    "attached containers; run `boxes proxy clean`",
+                )
+            inspected = ExecResult(1, "", "missing")
+    if not inspected.ok:
+        res = _run(
+            ["docker", "network", "create", "--internal", NETWORK], timeout=60
+        )
+        if not res.ok:
+            return res
+    if not _run(["docker", "network", "inspect", EGRESS_NETWORK], timeout=30).ok:
+        res = _run(["docker", "network", "create", EGRESS_NETWORK], timeout=60)
         if not res.ok:
             return res
 
-    _run(["docker", "rm", "-f", CONTAINER], timeout=60)
     ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
     res = _run(
         [
@@ -121,6 +145,12 @@ def up(rebuild: bool = False) -> ExecResult:
     if not res.ok:
         _run(["docker", "rm", "-f", CONTAINER])
         return res
+    # Attach egress after provision-up so Docker can pick a free ethN name
+    # without colliding with the helper's stable prov0 interface.
+    res = _run(["docker", "network", "connect", EGRESS_NETWORK, CONTAINER], timeout=60)
+    if not res.ok:
+        _run(["docker", "rm", "-f", CONTAINER])
+        return res
     for _ in range(20):
         if services_ok():
             break
@@ -143,6 +173,7 @@ def down(clean: bool = False) -> ExecResult:
     _run(["docker", "rm", "-f", CONTAINER], timeout=60)
     if clean:
         _run(["docker", "network", "rm", NETWORK], timeout=60)
+        _run(["docker", "network", "rm", EGRESS_NETWORK], timeout=60)
         _run(["docker", "volume", "rm", "-f", CACHE_VOLUME], timeout=60)
         shutil.rmtree(ARTIFACTS_DIR, ignore_errors=True)
     return ExecResult(0, "", "")
@@ -155,6 +186,7 @@ def status() -> dict:
         "healthy": services_ok() if up else False,
         "container": CONTAINER,
         "network": NETWORK,
+        "egress_network": EGRESS_NETWORK,
         "proxy_ip": PROXY_IP,
         "url": proxy_url(),
         "apt_proxy_url": apt_proxy_url(),

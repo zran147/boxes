@@ -171,7 +171,9 @@ class QemuBackend:
         if not self.base.is_file():
             return tag
         st = self.base.stat()
-        return f"{self.base.name}:{st.st_size}:{st.st_mtime_ns}"
+        # Include the resolved path: bases for different OS stores share a
+        # filename and can otherwise collide in the verification cache.
+        return f"{self.base.resolve()}:{st.st_size}:{st.st_mtime_ns}"
 
     def build_image(self, tag: str, context: str) -> ExecResult:
         return ExecResult(1, "", "use `boxes image prep-vm` to build the VM base")
