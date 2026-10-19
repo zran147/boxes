@@ -1,0 +1,18 @@
+id: suid-emergency-discovery
+version: 1.0.0
+kind: discovery
+description: "Enumerate a custom SUID helper left in the filesystem."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 2
+provision: ./provision.sh
+poc:
+  context: target
+  container: ./poc.sh
+actor: $u
+requires:
+  - access_shell($u)
+provides:
+  - knows(suid, emergency)
+walkthrough: |
+  Local enumeration finds `/usr/local/bin/emergency`, a root-owned SUID
+          binary. We still need to test whether it can be abused.

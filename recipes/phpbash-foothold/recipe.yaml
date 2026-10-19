@@ -1,0 +1,26 @@
+id: phpbash-foothold
+version: 1.0.0
+kind: foothold
+description: "Use an exposed PHP web shell to obtain a user shell."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 4
+tools: [curl]
+yields: ["user"]
+provision: ./provision.sh
+poc:
+  context: attacker
+  container: ./poc.sh
+assets: ./files
+requires:
+  - open_port($h, 8084)
+  - knows(path, $path)
+provides:
+  - access_shell($u)
+params:
+
+  u:
+    type: choice
+    values: ["www-data"]
+walkthrough: |
+  The development directory `/{path}` contains a phpbash web shell. It
+          executes commands as `{u}`, and the user flag is readable through it.

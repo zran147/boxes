@@ -12,7 +12,8 @@ poc:
 yields: ["user"]
 requires:
   - open_port($h, 22)
-  - creds($u, $p)
+  - creds.uname($u)
+  - creds.pass($p)
 provides:
   - access_shell($u)
 walkthrough: |

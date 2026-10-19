@@ -13,6 +13,9 @@ requires:
   - open_port($h, 21)
 provides:
   - service_access(ftp, $ftp_user, $ftp_pass)
+  - creds($ftp_user, $ftp_pass)
+  - creds.uname($ftp_user)
+  - creds.pass($ftp_pass)
 params:
   ftp_user:
     type: choice

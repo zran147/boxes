@@ -1,0 +1,18 @@
+id: tmux-session-discovery
+version: 1.0.0
+kind: discovery
+description: "Find a root-owned terminal session socket readable by the user."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 2
+provision: ./provision.sh
+poc:
+  context: target
+  container: ./poc.sh
+actor: $u
+requires:
+  - access_shell($u)
+provides:
+  - knows(tmux, root)
+walkthrough: |
+  A root shell is attached to the socket `/tmp/.devs/dev_sess`. The
+          directory is accessible, so `{u}` can connect to the session.

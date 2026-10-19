@@ -1,0 +1,20 @@
+id: sudo-all-privesc
+version: 1.0.0
+kind: privesc
+description: "Use unrestricted sudo access to read the root flag."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 2
+yields: ["root"]
+provision: ./provision.sh
+poc:
+  context: target
+  container: ./poc.sh
+actor: $u
+requires:
+  - access_shell($u)
+  - knows(sudo, all)
+provides:
+  - access_root()
+walkthrough: |
+  With passwordless `sudo` for every command, `{u}` simply runs a root
+          shell and reads `/root/root.txt`.

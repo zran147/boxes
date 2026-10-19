@@ -1,0 +1,24 @@
+id: web-upload-foothold
+version: 1.0.0
+kind: foothold
+description: "Upload a shell through an authenticated image/file upload feature."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 6
+tools: [curl]
+yields: ["user"]
+provision: ./provision.sh
+poc:
+  context: attacker
+  container: ./poc.sh
+assets: ./files
+requires:
+  - open_port($h, 8083)
+  - knows(path, $path)
+  - creds.uname($u)
+  - creds.pass($p)
+provides:
+  - access_shell($u)
+walkthrough: |
+  After logging into the `{path}` application as `{u}` / `{p}`, the upload
+          form accepts a server-side script. Requesting the uploaded file
+          executes it as `{u}` and reads `user.txt`.

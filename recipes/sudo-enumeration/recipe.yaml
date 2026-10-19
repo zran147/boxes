@@ -1,0 +1,17 @@
+id: sudo-enumeration
+version: 1.0.0
+kind: discovery
+description: "Enumerate unrestricted sudo rights for the foothold user."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 1
+provision: ./provision.sh
+poc:
+  context: target
+  container: ./poc.sh
+actor: $u
+requires:
+  - access_shell($u)
+provides:
+  - knows(sudo, all)
+walkthrough: |
+  `sudo -l` shows that `{u}` can run anything as root without a password.

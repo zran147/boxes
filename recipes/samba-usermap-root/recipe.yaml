@@ -1,0 +1,22 @@
+id: samba-usermap-root
+version: 1.0.0
+kind: privesc
+description: "Reuse the Samba command injection with root privileges."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 6
+tools: [curl]
+yields: ["root"]
+provision: ./provision.sh
+poc:
+  context: attacker
+  container: ./poc.sh
+assets: ./files
+requires:
+  - open_port($h, 8446)
+  - access_shell($u)
+  - knows(service, samba)
+provides:
+  - access_root()
+walkthrough: |
+  The same username-map injection is running as root on the management
+          listener. Our command now returns `/root/root.txt`.

@@ -1,0 +1,26 @@
+id: bank-upload-bypass-foothold
+version: 1.0.0
+kind: foothold
+description: "Bypass an upload extension filter and execute a server-side shell."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 5
+tools: [curl]
+yields: ["user"]
+provision: ./provision.sh
+poc:
+  context: attacker
+  container: ./poc.sh
+assets: ./files
+requires:
+  - open_port($h, 8088)
+  - knows(vhost, $vhost)
+provides:
+  - access_shell($u)
+params:
+
+  u:
+    type: choice
+    values: ["www-data"]
+walkthrough: |
+  The support upload endpoint on `{vhost}` only checks the extension. We
+          upload a script under the debug extension and execute it as `{u}`.

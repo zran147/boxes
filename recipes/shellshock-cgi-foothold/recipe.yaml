@@ -1,0 +1,27 @@
+id: shellshock-cgi-foothold
+version: 1.0.0
+kind: foothold
+description: "Exploit a CGI-backed Shellshock endpoint for a user shell."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 6
+tools: [curl]
+yields: ["user"]
+provision: ./provision.sh
+poc:
+  context: attacker
+  container: ./poc.sh
+assets: ./files
+requires:
+  - open_port($h, 8082)
+  - knows(path, $path)
+provides:
+  - access_shell($u)
+params:
+
+  u:
+    type: choice
+    values: ["shelly"]
+walkthrough: |
+  The CGI script `/{path}/user.sh` inherits the `User-Agent` header into
+          its environment. A Shellshock function payload executes commands as
+          `{u}` and lets us read `user.txt`.

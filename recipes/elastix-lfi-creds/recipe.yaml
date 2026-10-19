@@ -1,0 +1,28 @@
+id: elastix-lfi-creds
+version: 1.0.0
+kind: creds
+description: "Read the Elastix configuration through its LFI endpoint."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 5
+tools: [curl]
+provision: ./provision.sh
+poc:
+  context: attacker
+  container: ./poc.sh
+assets: ./files
+requires:
+  - open_port($h, 8081)
+  - knows(path, $path)
+provides:
+  - creds.uname($u)
+  - creds.pass($p)
+params:
+
+  u:
+    type: username
+  p:
+    type: password
+    length: 14
+walkthrough: |
+  The `{path}` application exposes a local-file include. Reading the
+          Elastix configuration reveals `{u}` / `{p}`, which we can reuse for SSH.

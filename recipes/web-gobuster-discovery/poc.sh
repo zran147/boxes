@@ -3,7 +3,7 @@
 # unprivileged context.
 set -eu
 found=""
-for w in admin backup dev secret api; do
+for w in admin backup dev secret api nibbleblog plugins vtigercrm balance-transfer cgi-bin; do
     code=$(curl -s -o /dev/null -w '%{http_code}' "http://${BOX_HOST}/$w/")
     if [ "$code" = "200" ]; then
         found="$w"

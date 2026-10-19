@@ -1,0 +1,25 @@
+id: heartbleed-key-foothold
+version: 1.0.0
+kind: foothold
+description: "Leak an SSH private key from Heartbleed-affected memory."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 6
+tools: [curl, ssh]
+yields: ["user"]
+provision: ./provision.sh
+poc:
+  context: attacker
+  container: ./poc.sh
+requires:
+  - open_port($h, 8443)
+  - knows(vuln, heartbleed)
+provides:
+  - access_shell($u)
+params:
+
+  u:
+    type: choice
+    values: ["hype"]
+walkthrough: |
+  The Heartbleed endpoint leaks the private key of `{u}`. Using it over
+          SSH gives us the account and its user flag.

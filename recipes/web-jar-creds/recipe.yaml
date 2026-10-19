@@ -1,0 +1,27 @@
+id: web-jar-creds
+version: 1.0.0
+kind: creds
+description: "Decompile a publicly served JAR to recover database credentials."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 4
+tools: [curl, unzip]
+provision: ./provision.sh
+poc:
+  context: attacker
+  container: ./poc.sh
+requires:
+  - open_port($h, 8086)
+  - knows(path, $path)
+provides:
+  - creds.uname($u)
+  - creds.pass($p)
+params:
+
+  u:
+    type: username
+  p:
+    type: password
+    length: 16
+walkthrough: |
+  The plugin directory `/{path}` exposes `BlockCore.jar`. Extracting its
+          classes reveals a hard-coded database credential: `{u}` / `{p}`.

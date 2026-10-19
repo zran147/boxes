@@ -1,0 +1,24 @@
+id: web-command-injection-foothold
+version: 1.0.0
+kind: foothold
+description: "Exploit a command-injection endpoint for a web user shell."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 5
+tools: [curl]
+yields: ["user"]
+provision: ./provision.sh
+poc:
+  context: attacker
+  container: ./poc.sh
+assets: ./files
+requires:
+  - open_port($h, 8084)
+  - knows(path, $path)
+  - creds.uname($u)
+  - creds.pass($p)
+provides:
+  - access_shell($u)
+walkthrough: |
+  Authenticated as `{u}` / `{p}`, the application endpoint
+          `/{path}/run` passes user input to a shell. We use it to read
+          `user.txt`.

@@ -1,0 +1,18 @@
+id: cron-discovery
+version: 1.0.0
+kind: discovery
+description: "Find a root cron job executing a user-writable script."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 2
+provision: ./provision.sh
+poc:
+  context: target
+  container: ./poc.sh
+actor: $u
+requires:
+  - access_shell($u)
+provides:
+  - knows(cron, writable)
+walkthrough: |
+  A root-owned scheduler repeatedly runs `/opt/boxes-cron/run.sh`, and
+          `{u}` can write to that script.

@@ -1,0 +1,20 @@
+id: pihole-default-creds
+version: 1.0.0
+kind: creds
+description: "A Pi-hole-style device still uses the Raspberry Pi default credentials."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 2
+tools: [sshpass, ssh]
+provision: ./provision.sh
+poc:
+  context: attacker
+  container: ./poc.sh
+requires:
+  - open_port($h, 22)
+  - knows(path, admin)
+provides:
+  - creds.uname(pi)
+  - creds.pass(raspberry)
+walkthrough: |
+  The Pi-hole admin page points at a Raspberry Pi host that still accepts
+          the default `pi` / `raspberry` SSH login.

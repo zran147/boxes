@@ -1,0 +1,28 @@
+id: sqli-admin-creds
+version: 1.0.0
+kind: creds
+description: "Bypass a web login with SQL injection and recover admin credentials."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 4
+tools: [curl]
+provision: ./provision.sh
+poc:
+  context: attacker
+  container: ./poc.sh
+assets: ./files
+requires:
+  - open_port($h, 8087)
+  - knows(vhost, $vhost)
+provides:
+  - creds.uname($u)
+  - creds.pass($p)
+params:
+
+  u:
+    type: username
+  p:
+    type: password
+    length: 15
+walkthrough: |
+  Posting `' OR 1=1--` to the `{vhost}` login bypasses authentication and
+          exposes the application credential `{u}` / `{p}`.

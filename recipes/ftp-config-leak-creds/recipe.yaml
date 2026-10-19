@@ -10,7 +10,9 @@ poc:
   context: attacker
   container: ./poc.sh
 requires:
-  - service_access(ftp, $u, $p)
+  - open_port($h, 21)
+  - creds.uname($u)
+  - creds.pass($p)
 provides:
   - creds($ssh_user, $ssh_pass)
   - creds.uname($ssh_user)

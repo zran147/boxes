@@ -1,0 +1,23 @@
+id: dns-zone-transfer-discovery
+version: 1.0.0
+kind: discovery
+description: "A permissive DNS server reveals internal virtual hosts."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 2
+tools: [dig]
+provision: ./provision.sh
+poc:
+  context: attacker
+  container: ./poc.sh
+requires:
+  - open_port($h, 8053)
+provides:
+  - knows(vhost, $vhost)
+params:
+
+  vhost:
+    type: choice
+    values: ["bank.htb", "cronos.htb"]
+walkthrough: |
+  Querying the DNS service reveals the internal name `{vhost}`. That host
+          is the entry point for the web application.

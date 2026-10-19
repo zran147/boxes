@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from boxes.facts import parse_fact
+from boxes.facts import Var, parse_fact
 from boxes.manifest import materialize
 from boxes.planner import generate, generate_paths, is_relevant, satisfies
 from boxes.registry import load_registry, select
@@ -41,8 +41,8 @@ def test_generated_machines_are_valid(pool, to_user, to_root, seed):
 
 
 def test_infeasible_depth_returns_none(pool):
-    # with the shipped recipe graph there is no 4-step chain to the user flag
-    assert generate(pool, OS, 4, 1, 1) is None
+    # with the shipped recipe graph there is no 4-step chain to the root flag
+    assert generate(pool, OS, 1, 4, 1) is None
 
 
 def test_deterministic_under_same_seed(pool):
@@ -65,17 +65,31 @@ def test_writeup_has_no_unresolved_placeholders(pool):
 def test_leaked_credentials_are_the_ones_used(pool):
     """The FTP recipe leaks creds; the SSH foothold must use exactly those."""
     plan = None
-    for seed in range(200):
+    foothold = None
+    for seed in range(500):
         p = generate(pool, OS, 3, 2, seed)
-        if p and any(s.recipe.id == "ftp-config-leak-creds" for s in p.steps):
+        if not p or not any(s.recipe.id == "ftp-config-leak-creds" for s in p.steps):
+            continue
+        candidate = next(
+            (s for s in p.steps if s.recipe.id == "ssh-creds-foothold"), None
+        )
+        if candidate is None:
+            continue
+        # The planner may combine a username and password from different
+        # sources now that they are separate facts. Keep this regression test
+        # focused on the case where SSH consumes the FTP pair together.
+        if all(
+            candidate.subst.get(f"ssh-creds-foothold#{p.steps.index(candidate)}.{name}")
+            == Var(f"ftp-config-leak-creds#{p.steps.index(next(s for s in p.steps if s.recipe.id == 'ftp-config-leak-creds'))}.{source}")
+            for name, source in (("u", "ssh_user"), ("p", "ssh_pass"))
+        ):
             plan = p
+            foothold = candidate
             break
-    assert plan is not None, "no ftp chain found"
+    assert plan is not None, "no coupled FTP/SSH chain found"
 
     m = materialize(plan, 0)
     leak = next(s for s in plan.steps if s.recipe.id == "ftp-config-leak-creds")
-    foothold = next(s for s in plan.steps if s.recipe.id == "ssh-creds-foothold")
-
     leak_ctx = m.step_context(leak)
     foot_ctx = m.step_context(foothold)
     assert leak_ctx["ssh_user"] == foot_ctx["u"]
@@ -84,7 +98,7 @@ def test_leaked_credentials_are_the_ones_used(pool):
 
 def test_satisfies_backtracks_over_credential_choices():
     """satisfies() must not be fooled by the first fact that happens to match."""
-    from boxes.facts import parse_fact
+    from boxes.facts import Var, parse_fact
     from boxes.planner import Plan, Step, _applications, initial_state
     from boxes.recipe import Recipe
 
@@ -241,3 +255,33 @@ def test_user_and_root_difficulty_are_separate(pool):
     assert report(root_hard)["user_band"] == "easy"
     assert report(root_hard)["root_band"] == "hard"
     assert report(root_hard)["band"] == "hard"
+
+
+def test_literal_requirement_can_consume_a_variable_fact():
+    from boxes.facts import parse_fact
+    from boxes.planner import Plan, Step, _applications, initial_state
+    from boxes.recipe import Recipe
+
+    def mk(rid, kind, requires, provides, yields=()):
+        return Recipe(
+            id=rid, version="1.0.0", kind=kind, os=["ubuntu-*"], difficulty=2,
+            requires=[parse_fact(x) for x in requires],
+            provides=[parse_fact(x) for x in provides],
+            yields=list(yields), params={}, walkthrough="",
+        )
+
+    producer = mk(
+        "a", "discovery", ["open_port($h, 80)"],
+        ["knows(path, $path)"],
+    )
+    consumer = mk(
+        "b", "privesc", ["knows(path, admin)"],
+        ["access_root()"], ["root"],
+    )
+    a = list(_applications(producer, initial_state("ubuntu-22.04"), random.Random(0), "a#0"))[0]
+    step_a = Step(producer, "a#0", a[2], a[0], a[1], a[3])
+    b = list(_applications(consumer, step_a.state, random.Random(0), "b#1"))[0]
+    step_b = Step(consumer, "b#1", b[2], b[0], b[1], b[3])
+    plan = Plan("ubuntu-22.04", [step_a, step_b], 0)
+    assert satisfies(plan)
+    assert is_relevant(plan)

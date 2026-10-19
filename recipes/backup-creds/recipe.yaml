@@ -13,6 +13,8 @@ requires:
   - open_port($h, 8080)
 provides:
   - creds($backup_user, $backup_pass)
+  - creds.uname($backup_user)
+  - creds.pass($backup_pass)
 params:
   backup_user:
     type: username

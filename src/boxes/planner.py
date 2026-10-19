@@ -355,10 +355,11 @@ def _effective_requires(step: Step) -> set[Fact]:
 def is_relevant(plan: Plan) -> bool:
     """True if every step lies on a dependency path to a flag.
 
-    Edges are built from *actual* fact sharing (after each step's substitution),
-    not mere unifiability, so a redundant producer whose fact nobody really
-    consumed is not counted as an ancestor. Adjacency is not required: a plan
-    may fan out from one step and merge later, as long as no step is a dead end.
+    Edges are built from facts that can satisfy one another after each step's
+    substitution, including a literal requirement consuming a variable fact.
+    A redundant producer whose fact nobody can consume is not counted as an
+    ancestor. Adjacency is not required: a plan may fan out from one step and
+    merge later, as long as no step is a dead end.
     """
     steps = plan.steps
     if not steps:
@@ -373,7 +374,12 @@ def is_relevant(plan: Plan) -> bool:
         if not provided:
             continue
         for j in range(i + 1, len(steps)):
-            if provided & _effective_requires(steps[j]):
+            needed = _effective_requires(steps[j])
+            if any(
+                unify_fact(p, r, {}) is not None
+                for p in provided
+                for r in needed
+            ):
                 producers[j].append(i)
 
     seen = set(goals)
@@ -388,31 +394,36 @@ def is_relevant(plan: Plan) -> bool:
 
 
 def satisfies(plan: Plan) -> bool:
-    """Re-simulate the plan using the bindings the planner actually chose.
+    """Re-simulate the plan and verify that a consistent chain exists.
 
-    Recomputing a fresh first application is not equivalent: a step can have
-    several valid bindings, and the one chosen for the plan is what later
-    steps depend on. This walks the recorded substitutions and verifies each
-    requirement against the state produced by the planned chain.
+    The planner stores how each step bound its own variables, but a later
+    requirement may bind a variable supplied by an earlier step. Keeping a
+    small frontier of application states validates those cross-step bindings
+    instead of pretending requirement facts must be byte-for-byte identical.
     """
-    state = initial_state(plan.os_name)
+    states = [initial_state(plan.os_name)]
     for step in plan.steps:
-        reqs = [subst_fact(f, step.subst) for f in step.requires]
-        for req in reqs:
-            if req in state:
-                continue
-            # open_port preconditions are free in the planner; they become part
-            # of the machine's service inventory rather than a state fact.
-            if (
-                req.pred == "open_port"
-                and len(req.args) == 2
-                and req.args[0] == TARGET
+        nxt: list[list[Fact]] = []
+        seen: set[str] = set()
+        for state in states:
+            for _reqs, _provs, subst, merged in _applications(
+                step.recipe, state, random.Random(0), step.instance
             ):
-                continue
+                if any(
+                    key in subst and subst[key] != value
+                    for key, value in step.subst.items()
+                ):
+                    continue
+                key = "|".join(sorted(repr(f) for f in merged))
+                if key in seen:
+                    continue
+                seen.add(key)
+                nxt.append(merged)
+                if len(nxt) >= 512:
+                    break
+            if len(nxt) >= 512:
+                break
+        if not nxt:
             return False
-        provided = [subst_fact(f, step.subst) for f in step.provides]
-        new = [*provided, *(req for req in reqs if req.pred == "open_port")]
-        for fact in new:
-            if fact not in state:
-                state.append(fact)
+        states = nxt
     return True
