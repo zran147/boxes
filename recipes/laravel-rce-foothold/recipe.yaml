@@ -1,0 +1,19 @@
+id: laravel-rce-foothold
+version: 1.0.0
+kind: foothold
+description: "Exploit Laravel debug-mode deserialization for www-data execution."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 6
+tools: [curl]
+provision: ./provision.sh
+poc:
+  context: attacker
+  container: ./poc.sh
+assets: ./files
+requires:
+  - open_port($h, 8093)
+provides:
+  - access_shell(www-data)
+walkthrough: |
+  The staging Laravel app exposes debug mode. A crafted XSRF token
+          deserializes to a command executed as `www-data`.

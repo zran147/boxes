@@ -1,0 +1,24 @@
+id: adm-log-creds
+version: 1.0.0
+kind: creds
+description: "Read an audit log and recover another user's password."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 3
+provision: ./provision.sh
+poc:
+  context: target
+  container: ./poc.sh
+actor: $u
+requires:
+  - access_shell($u)
+provides:
+  - creds.uname(shaun)
+  - creds.pass($p)
+params:
+
+  p:
+    type: password
+    length: 12
+walkthrough: |
+  The `adm` group can read `/var/log/audit`. A stale log entry contains
+          shaun's password `{p}`.

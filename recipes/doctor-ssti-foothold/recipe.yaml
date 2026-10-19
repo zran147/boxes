@@ -1,0 +1,19 @@
+id: doctor-ssti-foothold
+version: 1.0.0
+kind: foothold
+description: "Exploit a Flask/Jinja2 SSTI in the post archive."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 6
+tools: [curl]
+provision: ./provision.sh
+poc:
+  context: attacker
+  container: ./poc.sh
+assets: ./files
+requires:
+  - open_port($h, 8092)
+provides:
+  - access_shell(web)
+walkthrough: |
+  The archive route renders user input as a Jinja2 template. A crafted
+          post executes commands as the `web` service account.

@@ -1,0 +1,19 @@
+id: cron-ini-privesc
+version: 1.0.0
+kind: privesc
+description: "Replace a root-scheduled memcached command in a writable directory."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 5
+yields: ["root"]
+provision: ./provision.sh
+poc:
+  context: target
+  container: ./poc.sh
+actor: $u
+requires:
+  - user_shell($u)
+provides:
+  - access_root()
+walkthrough: |
+  A root scheduler runs a memcached command from a directory owned by the
+          user. We replace the command with one that copies `root.txt`.

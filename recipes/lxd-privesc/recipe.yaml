@@ -1,0 +1,19 @@
+id: lxd-privesc
+version: 1.0.0
+kind: privesc
+description: "Use the lxd group to mount the host filesystem or gain root."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 5
+yields: ["root"]
+provision: ./provision.sh
+poc:
+  context: target
+  container: ./poc.sh
+actor: $u
+requires:
+  - user_shell($u)
+provides:
+  - access_root()
+walkthrough: |
+  The user is in the `lxd` group. A privileged container can mount the
+          host root filesystem, and the helper lets us read `root.txt`.

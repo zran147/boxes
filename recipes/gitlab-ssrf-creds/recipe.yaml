@@ -1,0 +1,24 @@
+id: gitlab-ssrf-creds
+version: 1.0.0
+kind: creds
+description: "Use the GitLab file-read/SSRF chain to recover an SSH key login."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 5
+tools: [curl]
+provision: ./provision.sh
+poc:
+  context: attacker
+  container: ./poc.sh
+requires:
+  - open_port($h, 8095)
+provides:
+  - creds.uname(dexter)
+  - creds.pass($p)
+params:
+
+  p:
+    type: password
+    length: 14
+walkthrough: |
+  The GitLab SSRF reads a protected project file containing dexter's
+          SSH credential `{p}`.

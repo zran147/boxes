@@ -14,7 +14,7 @@ chmod 0600 /root/root.txt
 
 binary="${BOX_BINARY:?BOX_BINARY is not set}"
 case "$binary" in
-    vi|nano|journalctl) ;;
+    vi|nano|journalctl|luvit|composer|msfconsole) ;;
     *) echo "unsupported binary: $binary" >&2; exit 1 ;;
 esac
 cat > "/usr/local/bin/$binary" <<'EOF'

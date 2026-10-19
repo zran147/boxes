@@ -1,0 +1,26 @@
+id: adminer-ssrf-creds
+version: 1.0.0
+kind: creds
+description: "Use Adminer SSRF to read the application configuration."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 4
+tools: [curl]
+provision: ./provision.sh
+poc:
+  context: attacker
+  container: ./poc.sh
+requires:
+  - open_port($h, 8091)
+provides:
+  - creds.uname($u)
+  - creds.pass($p)
+params:
+
+  u:
+    type: username
+  p:
+    type: password
+    length: 14
+walkthrough: |
+  Adminer's server parameter can be abused for SSRF. Reading the local
+          configuration returns the application credential `{u}` / `{p}`.

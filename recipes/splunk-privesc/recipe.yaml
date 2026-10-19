@@ -1,0 +1,21 @@
+id: splunk-privesc
+version: 1.0.0
+kind: privesc
+description: "Use Splunk's management API to run a command as root."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 5
+yields: ["root"]
+provision: ./provision.sh
+poc:
+  context: target
+  container: ./poc.sh
+actor: $u
+assets: ./files
+requires:
+  - open_port($h, 8089)
+  - user_shell($u)
+provides:
+  - access_root()
+walkthrough: |
+  Splunk runs as root and its authenticated app-deployment endpoint
+          executes a payload. We read `/root/root.txt` through it.

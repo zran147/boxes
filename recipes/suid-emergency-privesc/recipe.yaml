@@ -11,7 +11,7 @@ poc:
   container: ./poc.sh
 actor: $u
 requires:
-  - user_shell($u)
+  - access_shell($u)
   - knows(suid, emergency)
 provides:
   - access_root()

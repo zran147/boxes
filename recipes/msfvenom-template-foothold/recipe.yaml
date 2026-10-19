@@ -1,0 +1,21 @@
+id: msfvenom-template-foothold
+version: 1.0.0
+kind: foothold
+description: "Exploit msfvenom APK template command injection."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 6
+tools: [curl]
+yields: ["user"]
+provision: ./provision.sh
+poc:
+  context: attacker
+  container: ./poc.sh
+assets: ./files
+requires:
+  - open_port($h, 8094)
+provides:
+  - access_shell(kid)
+  - user_shell(kid)
+walkthrough: |
+  The payload builder passes the APK template through msfvenom 6.0.9.
+          CVE-2020-7384 injects a command that gives us a shell as `kid`.

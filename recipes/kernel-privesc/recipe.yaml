@@ -1,0 +1,19 @@
+id: kernel-privesc
+version: 1.0.0
+kind: privesc
+description: "Exploit an old local kernel vulnerability for root."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 7
+yields: ["root"]
+provision: ./provision.sh
+poc:
+  context: target
+  container: ./poc.sh
+actor: $u
+requires:
+  - user_shell($u)
+provides:
+  - access_root()
+walkthrough: |
+  The kernel is old enough for a public local privilege-escalation
+          exploit. The helper models the resulting root context.

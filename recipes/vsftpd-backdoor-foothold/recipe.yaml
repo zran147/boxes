@@ -1,0 +1,19 @@
+id: vsftpd-backdoor-foothold
+version: 1.0.0
+kind: foothold
+description: "Trigger the vsftpd 2.3.4 backdoor for a root shell."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 4
+tools: [curl]
+provision: ./provision.sh
+poc:
+  context: attacker
+  container: ./poc.sh
+assets: ./files
+requires:
+  - open_port($h, 6200)
+provides:
+  - access_shell(root)
+walkthrough: |
+  A username containing `:)` starts the vsftpd backdoor listener on
+          port 6200. The resulting shell runs as root.

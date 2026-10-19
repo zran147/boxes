@@ -18,7 +18,7 @@ params:
 
   binary:
     type: choice
-    values: ["vi", "nano", "journalctl"]
+    values: ["vi", "nano", "journalctl", "luvit", "composer", "msfconsole"]
 walkthrough: |
   `sudo -l` permits `{binary}` as root. We invoke it through a wrapper
           that executes a root-readable command and exposes `root.txt`.

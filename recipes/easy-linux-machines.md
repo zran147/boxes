@@ -56,3 +56,22 @@ login/access step uses separate `creds.uname` and `creds.pass` facts, and every
 user-yielding step provides both `access_shell` and `user_shell`; root steps
 consume `user_shell` so they run as the actual user principal rather than an
 earlier service account.
+
+## Third batch: the next ten Linux machines
+
+| Machine | User path | Root path | Verify shape |
+|---|---|---|---|
+| **Traceback** | `web-gobuster-discovery` → `phpbash-foothold` | `sudo-wrapper-privesc` (`luvit`) | `--to-user 2 --to-root 1` |
+| **Admirer** | `web-gobuster-discovery` → `web-admin-panel-creds` → `ssh-creds-foothold` | `python-path-privesc` | `--to-user 3 --to-root 1` |
+| **Blunder** | `web-gobuster-discovery` → `web-admin-panel-creds` → `web-upload-foothold` | `blunder-sudo-cve-privesc` | `--to-user 3 --to-root 1` |
+| **Tabby** | `web-gobuster-discovery` → `elastix-lfi-creds` → `web-upload-foothold` | `lxd-privesc` | `--to-user 3 --to-root 1` |
+| **Doctor** | `doctor-ssti-foothold` → `adm-log-creds` → `ssh-creds-foothold` | `splunk-privesc` | `--to-user 3 --to-root 1` |
+| **Academy** | `laravel-rce-foothold` → `service-config-creds` → `ssh-creds-foothold` | `sudo-wrapper-privesc` (`composer`) | `--to-user 3 --to-root 1` |
+| **Laboratory** | `gitlab-ssrf-creds` → `ssh-creds-foothold` | `docker-security-privesc` | `--to-user 2 --to-root 1` |
+| **Help** | `web-gobuster-discovery` → `phpbash-foothold` | `kernel-privesc` | `--to-user 2 --to-root 1` |
+| **LaCasaDePapel** | `vsftpd-backdoor-foothold` → `lacasa-cert-creds` → `ssh-creds-foothold` | `cron-ini-privesc` | `--to-user 3 --to-root 1` |
+| **ScriptKiddie** | `msfvenom-template-foothold` | `sudo-wrapper-privesc` (`msfconsole`) | `--to-user 1 --to-root 1` |
+
+Traceback, Academy, and ScriptKiddie reuse the sudo-wrapper root primitive with
+`luvit`, `composer`, and `msfconsole` respectively. The three batches now cover
+thirty Linux machines from the easy catalogue.
