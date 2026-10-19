@@ -15,12 +15,13 @@ It works in three layers:
 3. **Check** — a plan is only emitted if every precondition was met earlier, and
    a recipe is only considered proven if its PoC exits 0.
 
-Status: **P0–P3 done. P4 in progress.** Numeric recipe difficulty (1–10),
-typed parameters/usernames, the manifest-driven attacker toolkit, the Ubuntu
+Status: **P0–P4 done.** Numeric recipe difficulty (1–10), typed
+parameters/usernames, the manifest-driven attacker toolkit, the Ubuntu
 22.04/24.04 + Debian 12 matrix, and Docker acceptance are done. The signed
-static registry and client are implemented (bundles, Ed25519 trust, lockfile,
-install/update/verify, untrusted-tier guard); the API server, hardened sandbox,
-and per-recipe CI are next. Themes remain deferred (>50 recipes).
+registry (static and HTTP API), Ed25519 trust, lockfile, locked Docker sandbox,
+signed verification attestations, and per-recipe CI are implemented. Follow-ups
+to P4: a dedicated isolated QEMU worker, a multi-OS CI matrix, and key
+rotation/TUF-style metadata. Themes remain deferred (>50 recipes).
 
 ## Quick start
 
@@ -646,22 +647,91 @@ boxes registry uninstall my-recipe
 - Tampering with the index, bundle, file, publisher key, or lock manifest is
   rejected.
 
-### Untrusted tier
+### Untrusted tier and locked sandbox
 
-Registry-installed recipes are **untrusted**. Until the hardened sandbox
-milestone lands:
+Registry-installed recipes are **untrusted**:
 
 - QEMU verification of an installed registry recipe is refused;
-- Docker verification requires an explicit opt-in:
+- Docker verification requires an explicit opt-in and automatically uses the
+  locked sandbox:
 
 ```bash
 boxes verify --recipe my-recipe --allow-untrusted
+boxes verify --recipe my-recipe --sandbox locked   # explicit, for local recipes too
 ```
 
-The opt-in warns that the current container runner is not yet the locked
-sandbox. First-party recipes in `recipes/` remain the trusted local tier. The
-next P4 milestones are the reference API server, the locked Docker sandbox +
-attestations, and per-recipe CI.
+The locked profile drops all capabilities, adds back only the target set
+needed for user creation/services/low ports/setuid simulation, applies file,
+pids, memory, and CPU limits, and gives the attacker `no-new-privileges`.
+The target intentionally keeps setuid semantics so sudo/SUID recipes remain
+testable; the container is the boundary. First-party recipes in `recipes/`
+remain the trusted local tier. An isolated worker/QEMU sandbox is the next
+step for stronger untrusted isolation.
+
+### Attestations and per-recipe CI
+
+`boxes verify` can sign a fresh verification attestation (attestations force
+`--no-cache`):
+
+```bash
+boxes verify --recipe my-recipe --sandbox locked --no-cache \
+    --attest-key keys/publisher.key --attestation-dir attestations
+```
+
+An attestation records the recipe files, OS, backend, sandbox, image, toolkit
+hash, timestamps, and per-step result; it is signed by the publisher/CI key.
+Publish it with the recipe:
+
+```bash
+boxes registry publish recipes/my-recipe \
+    --registry-dir /srv/boxes-registry \
+    --publisher me --key keys/publisher.key \
+    --attestation attestations/my-recipe-1.0.0.json
+```
+
+`boxes registry install` stores the attestation in the lock; `boxes registry
+verify` re-verifies it and prints `(attested)`. The per-recipe CI pipeline is:
+
+```bash
+scripts/registry-ci.sh RECIPE_DIR REGISTRY_DIR PUBLISHER PRIVATE_KEY
+```
+
+It runs lint, the harness, locked verification, signs an attestation, and
+publishes the bundle. Run `boxes proxy up` first.
+
+### Serving a registry (HTTP API)
+
+```bash
+# read-only static server
+boxes registry serve /srv/boxes-registry --bind 0.0.0.0 --port 8000
+
+# read/write API: POST /v1/publish, operator-signed index
+boxes registry serve /srv/boxes-registry --bind 0.0.0.0 --port 8000 \
+    --operator-key operator.key \
+    --trust-publisher publisher.pub
+
+boxes registry add local http://127.0.0.1:8000 --key operator.pub
+```
+
+The API authenticates publishers by their bundle signature and can restrict them
+to an explicit public-key allowlist. The server never executes recipe code; it
+verifies signatures, optionally checks a signed attestation, and runs only the
+symbolic lint/harness preflight. Publish through it with:
+
+```bash
+boxes registry publish recipes/my-recipe --url http://127.0.0.1:8000 \
+    --publisher me --key publisher.key --attestation attestations/my-recipe-1.0.0.json
+```
+
+Attestations can be required client-side:
+
+```bash
+boxes registry install my-recipe --require-attestation
+boxes registry verify --require-attestation
+```
+
+An isolated QEMU worker and a multi-OS CI matrix are the remaining P4
+hardening follow-ups; untrusted QEMU verification stays refused.
 
 ## Roadmap
 
@@ -671,4 +741,4 @@ attestations, and per-recipe CI.
 | **P1** — container fast path | Pluggable backend, target + attacker images, internal network, shared attacker container, provision/poc contract, assets, L2 + L3 verification, content-addressed cache, parallel jobs, real recipes | **Done** |
 | **P2** — fidelity + branching | QEMU (KVM auto/TCG fallback) + prebaked base + snapshots; one PoC per recipe (`poc.container` XOR `poc.vm`); pre-PoC snapshot/restore; shared-prefix DAG with one-VM verification and attacker reset; hybrid provisioning proxy (durable apt cache + squid + artifact store) with egress-only phase and seal; apt snapshot pinning; VM base checksum/resume/store overrides; proxy health/cleanup | **Done** |
 | **P3** — coherence + scale | Numeric difficulty 1–10 (machine = hardest recipe; separate user/root; provisional easy/medium/hard CLI bands; length/shape separate); typed params and human-looking usernames; weighted choices; manifest-driven attacker toolkit with lint/check; Ubuntu 22.04/24.04 + Debian 12 Docker (13/13 each); QEMU profiles, per-OS stores, and verified VM chains on all three; Docker integration matrix and acceptance script. Themes deferred until the catalogue is large enough (>50 recipes); planner-scale tuning as it grows. | **Done** |
-| **P4** — registry | In progress: signed static registry and client, deterministic content-addressed bundles, Ed25519 operator/publisher signatures, rollback protection, lockfile, install/update/verify, untrusted-tier guard. Next: reference API server, hardened sandbox + attestations, per-recipe CI. | **In progress** |
+| **P4** — registry | Signed static registry and HTTP API, deterministic content-addressed bundles, Ed25519 operator/publisher signatures, rollback protection, lockfile, install/update/verify, untrusted-tier guard, locked Docker sandbox, signed verification attestations with require-attestation policy, per-recipe CI, static/read-write server. Follow-ups: isolated QEMU worker, multi-OS CI matrix, key rotation/TUF. | **Done** |

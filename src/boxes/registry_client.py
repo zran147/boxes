@@ -16,6 +16,7 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
+from . import attest
 from .bundles import (
     SCHEMA as BUNDLE_SCHEMA,
     build_bundle,
@@ -303,13 +304,20 @@ def _verify_entry(entry: dict) -> None:
         raise RegistryError("bundle hash does not match the manifest")
 
 
-def install(spec: str, registry_name: str | None = None, force: bool = False) -> dict:
+def install(
+    spec: str,
+    registry_name: str | None = None,
+    force: bool = False,
+    require_attestation: bool = False,
+) -> dict:
     name, reg = _get_registry(registry_name)
     lock = load_lock()
     index = fetch_index(reg, floor=_sequence_floor(name, reg))
     _remember_sequence(name, index)
     entry = resolve(index, spec)
     _verify_entry(entry)
+    if require_attestation and not entry.get("attestation"):
+        raise RegistryError(f"{entry['id']}@{entry['version']} has no attestation")
 
     installed = registry_recipes() / entry["id"]
     old = next((item for item in lock["recipes"] if item["id"] == entry["id"]), None)
@@ -369,6 +377,7 @@ def install(spec: str, registry_name: str | None = None, force: bool = False) ->
         "publisher_fingerprint": entry["publisher_fingerprint"],
         "bundle_signature": entry["bundle_signature"],
         "files": entry["files"],
+        "attestation": entry.get("attestation"),
         "installed_at": _now(),
     })
     lock["registries"][name] = {
@@ -386,7 +395,10 @@ def install(spec: str, registry_name: str | None = None, force: bool = False) ->
     return entry
 
 
-def update(registry_name: str | None = None) -> list[dict]:
+def update(
+    registry_name: str | None = None,
+    require_attestation: bool = False,
+) -> list[dict]:
     lock = load_lock()
     changed = []
     for item in list(lock["recipes"]):
@@ -399,7 +411,10 @@ def update(registry_name: str | None = None) -> list[dict]:
         entry = resolve(index, item["id"])
         if entry["bundle"] == item["bundle"]:
             continue
-        install(item["id"], registry_name=name, force=True)
+        install(
+            item["id"], registry_name=name, force=True,
+            require_attestation=require_attestation,
+        )
         changed.append(entry)
     return changed
 
@@ -443,6 +458,22 @@ def verify_installed(offline: bool = False) -> list[dict]:
             _verify_entry(item)
         except RegistryError as e:
             errors.append(str(e))
+        attestation = item.get("attestation")
+        if attestation:
+            ok, error = attest.verify(attestation)
+            if not ok:
+                errors.append(f"attestation: {error}")
+            else:
+                if attestation.get("signer_fingerprint") != item.get("publisher_fingerprint"):
+                    errors.append("attestation signer is not the publisher")
+                if attestation.get("recipe") != item["id"]:
+                    errors.append("attestation recipe mismatch")
+                if attestation.get("version") != item["version"]:
+                    errors.append("attestation version mismatch")
+                if attestation.get("files") != item.get("files"):
+                    errors.append("attestation files mismatch")
+                if attestation.get("result") != "pass":
+                    errors.append("attestation is not a pass")
 
         if not offline:
             try:
@@ -467,9 +498,16 @@ def verify_installed(offline: bool = False) -> list[dict]:
                             errors.append(f"registry index {field} differs from the lock")
                     if indexed.get("files") != item.get("files"):
                         errors.append("registry index file hashes differ from the lock")
+                    if indexed.get("attestation") != item.get("attestation"):
+                        errors.append("registry index attestation differs from the lock")
             except RegistryError as e:
                 errors.append(str(e))
-        results.append({"id": item["id"], "version": item["version"], "errors": errors})
+        results.append({
+            "id": item["id"],
+            "version": item["version"],
+            "attested": bool(item.get("attestation")),
+            "errors": errors,
+        })
     return results
 
 
@@ -482,6 +520,7 @@ def publish(
     publisher: str,
     private_key: str | Path,
     operator_key: str | Path | None = None,
+    attestation_path: str | Path | None = None,
 ) -> dict:
     recipe_dir = Path(recipe_dir)
     out = Path(registry_dir)
@@ -521,6 +560,24 @@ def publish(
         target.write_bytes(tar_path.read_bytes())
     size = target.stat().st_size
 
+    attestation = None
+    if attestation_path is not None:
+        try:
+            attestation = json.loads(Path(attestation_path).read_text())
+        except (OSError, json.JSONDecodeError) as e:
+            raise RegistryError(f"cannot read attestation: {e}") from e
+        ok, error = attest.verify(attestation)
+        if not ok:
+            raise RegistryError(f"attestation: {error}")
+        if attestation.get("signer_fingerprint") != fingerprint(publisher_public):
+            raise RegistryError("attestation must be signed by the publisher key")
+        if attestation.get("recipe") != recipe.id or attestation.get("version") != recipe.version:
+            raise RegistryError("attestation recipe/version does not match")
+        if attestation.get("files") != manifest["files"]:
+            raise RegistryError("attestation files do not match the bundle")
+        if attestation.get("result") != "pass":
+            raise RegistryError("attestation result is not pass")
+
     same = [
         entry for entry in entries
         if entry.get("id") == recipe.id and entry.get("version") == recipe.version
@@ -531,6 +588,9 @@ def publish(
                 f"{recipe.id}@{recipe.version} already exists with different content; "
                 "bump the version"
             )
+        if attestation is not None:
+            for entry in same:
+                entry["attestation"] = attestation
     else:
         entries.append({
             "id": recipe.id,
@@ -541,6 +601,7 @@ def publish(
             "bundle": digest,
             "bundle_signature": sign(publisher_private, digest.encode("ascii")),
             "files": manifest["files"],
+            "attestation": attestation,
             "bundle_url": f"bundles/{digest}.tar.gz",
             "tar_sha256": tar_sha,
             "size": size,
@@ -565,6 +626,63 @@ def publish(
     body["signature"] = sign_json(operator_private, body)
     _write_json(index_path, body)
     return body
+
+
+def publish_api(
+    url: str,
+    recipe_dir: str | Path,
+    publisher: str,
+    private_key: str | Path,
+    attestation_path: str | Path | None = None,
+) -> dict:
+    import base64
+    import urllib.error
+    import urllib.request
+
+    recipe_dir = Path(recipe_dir)
+    recipe = load_recipe(recipe_dir / "recipe.yaml")
+    errors = lint([recipe])
+    if not recipe.verifiable:
+        errors.append(f"{recipe.id}: registry recipes must have provision+poc")
+    errors.extend(check_recipe(recipe).errors)
+    if errors:
+        raise RegistryError("recipe failed preflight: " + "; ".join(errors))
+
+    attestation = None
+    if attestation_path is not None:
+        try:
+            attestation = json.loads(Path(attestation_path).read_text())
+        except (OSError, json.JSONDecodeError) as e:
+            raise RegistryError(f"cannot read attestation: {e}") from e
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tar = Path(tmp) / "bundle.tar.gz"
+        manifest, digest, _tar_sha = build_bundle(recipe_dir, publisher, tar)
+        private = load_private(private_key)
+        public = private.public_key()
+        payload = {
+            "id": recipe.id,
+            "version": recipe.version,
+            "publisher": publisher,
+            "publisher_key": public_pem(public),
+            "bundle": base64.b64encode(tar.read_bytes()).decode("ascii"),
+            "signature": sign(private, digest.encode("ascii")),
+            "attestation": attestation,
+        }
+    request = urllib.request.Request(
+        url.rstrip("/") + "/v1/publish",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response:
+            return json.loads(response.read())
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", errors="replace")
+        raise RegistryError(f"publish failed ({e.code}): {detail}") from e
+    except OSError as e:
+        raise RegistryError(f"cannot reach registry: {e}") from e
 
 
 # --- query ------------------------------------------------------------------

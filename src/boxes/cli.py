@@ -7,6 +7,7 @@ import json
 import os
 import random
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
@@ -32,7 +33,9 @@ from .nethelper import (
 )
 from .planner import generate, generate_paths, satisfies
 from .registry import load_registry, select
+from . import attest
 from . import registry_client
+from . import registry_server
 from .registry_client import RegistryError
 from .signing import SignatureError
 from . import signing as registry_client_signing
@@ -74,18 +77,25 @@ def _untrusted_check(args, recipes) -> bool:
             file=sys.stderr,
         )
         return False
+    if getattr(args, "sandbox", None) == "trusted":
+        print(
+            "untrusted registry recipes require the locked Docker sandbox: "
+            + ", ".join(untrusted)
+            + ". Omit --sandbox (with --allow-untrusted) or pass --sandbox locked.",
+            file=sys.stderr,
+        )
+        return False
     if not args.allow_untrusted:
         print(
             "untrusted registry recipes: "
             + ", ".join(untrusted)
-            + ". Pass --allow-untrusted to run them in Docker "
-            "(the hardened sandbox is the next P4 milestone).",
+            + ". Pass --allow-untrusted to run them in the locked Docker sandbox.",
             file=sys.stderr,
         )
         return False
     print(
-        "warning: running untrusted registry recipes in Docker without the "
-        "hardened sandbox yet: " + ", ".join(untrusted),
+        "warning: running untrusted registry recipes in the locked Docker sandbox; "
+        "the isolated worker/attestation milestone is next: " + ", ".join(untrusted),
         file=sys.stderr,
     )
     return True
@@ -299,7 +309,13 @@ def _prepare_backend(args):
             return None
         backend = get_backend("qemu", accel=selected, os_name=args.os)
     else:
-        backend = get_backend(args.backend)
+        if args.backend == "docker":
+            sandbox = getattr(args, "sandbox", None)
+            if sandbox is None:
+                sandbox = "locked" if getattr(args, "allow_untrusted", False) else "trusted"
+            backend = get_backend("docker", sandbox=sandbox)
+        else:
+            backend = get_backend(args.backend)
     if not backend.available():
         print(f"backend {args.backend!r} is not available", file=sys.stderr)
         if args.backend == "qemu":
@@ -426,6 +442,17 @@ def cmd_verify(args) -> int:
     if any((args.difficulty, args.user_difficulty, args.root_difficulty)) and not args.machine:
         print("difficulty filters only apply to --machine", file=sys.stderr)
         return 2
+    if args.attest_key and args.machine:
+        print("attestations are per recipe; use --recipe or --all", file=sys.stderr)
+        return 2
+    if args.attest_key and not args.attestation_dir:
+        args.attestation_dir = "attestations"
+    if args.attestation_dir and not args.attest_key:
+        print("--attestation-dir requires --attest-key", file=sys.stderr)
+        return 2
+    if args.attest_key:
+        # An attestation must describe a fresh verification, not a cache hit.
+        args.no_cache = True
     if args.backend == "qemu" and args.os not in SUPPORTED_OS:
         print(
             f"unsupported VM OS {args.os}; supported: {', '.join(SUPPORTED_OS)}",
@@ -603,6 +630,7 @@ def cmd_verify(args) -> int:
     if not _untrusted_check(args, [recipe for recipe, _fixture in pairs]):
         return 2
 
+    started_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     results = verify_recipes(
         pairs,
         backend,
@@ -615,6 +643,25 @@ def cmd_verify(args) -> int:
     )
     for result in results:
         _print_verify(result)
+    if args.attest_key:
+        finished_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+        for (recipe, _fixture), result in zip(pairs, results):
+            if not result.ok:
+                continue
+            body = attest.build(
+                recipe,
+                result,
+                image_id=image_id,
+                os_name=args.os,
+                backend=backend.fidelity,
+                sandbox=getattr(backend, "sandbox", "vm"),
+                apt_snapshot=args.apt_snapshot,
+                started_at=started_at,
+                finished_at=finished_at,
+            )
+            signed = attest.sign(body, args.attest_key)
+            path = attest.write(signed, args.attestation_dir)
+            print(f"attestation: {path}")
 
     ok = sum(1 for r in results if r.ok)
     total = len(results) + harness_failures
@@ -679,13 +726,18 @@ def cmd_registry(args) -> int:
                 )
                 return 2
             entry = registry_client.install(
-                args.spec, args.registry, force=args.force
+                args.spec, args.registry, force=args.force,
+                require_attestation=args.require_attestation,
             )
             print(f"installed {entry['id']}@{entry['version']} from {entry['publisher']}")
             print(f"bundle: {entry['bundle']}")
+            if entry.get("attestation"):
+                print("attested: yes")
             return 0
         if args.registry_command == "update":
-            changed = registry_client.update(args.registry)
+            changed = registry_client.update(
+                args.registry, require_attestation=args.require_attestation
+            )
             if not changed:
                 print("nothing to update")
             for entry in changed:
@@ -701,24 +753,57 @@ def cmd_registry(args) -> int:
                 print("no installed registry recipes")
             failed = False
             for result in results:
+                if args.require_attestation and not result.get("attested"):
+                    result["errors"].append("attestation is required")
                 if result["errors"]:
                     failed = True
                     print(f"FAIL {result['id']}@{result['version']}")
                     for error in result["errors"]:
                         print(f"  {error}")
                 else:
-                    print(f"OK   {result['id']}@{result['version']}")
+                    suffix = " (attested)" if result.get("attested") else ""
+                    print(f"OK   {result['id']}@{result['version']}{suffix}")
             return 1 if failed else 0
-        if args.registry_command == "publish":
-            index = registry_client.publish(
-                args.recipe_dir,
-                args.registry_dir,
-                args.publisher,
-                args.key,
-                args.operator_key,
+        if args.registry_command == "serve":
+            trusted = set()
+            for key_path in args.trust_publisher or []:
+                trusted.add(registry_client_signing.fingerprint(
+                    registry_client_signing.load_public(key_path)
+                ))
+            print(
+                f"serving {Path(args.directory).resolve()} on "
+                f"http://{args.bind}:{args.port} "
+                f"({'read/write' if args.operator_key else 'read-only'})"
             )
-            print(f"published to {Path(args.registry_dir) / 'index.json'}")
-            print(f"index sequence: {index['sequence']}")
+            try:
+                registry_server.serve(
+                    args.directory, args.bind, args.port,
+                    args.operator_key, trusted or None,
+                )
+            except KeyboardInterrupt:
+                pass
+            return 0
+        if args.registry_command == "publish":
+            if bool(args.url) == bool(args.registry_dir):
+                print("publish needs exactly one of --registry-dir or --url", file=sys.stderr)
+                return 2
+            if args.url:
+                result = registry_client.publish_api(
+                    args.url, args.recipe_dir, args.publisher, args.key, args.attestation
+                )
+                print(f"published to {args.url}")
+                print(f"index sequence: {result.get('sequence')}")
+            else:
+                index = registry_client.publish(
+                    args.recipe_dir,
+                    args.registry_dir,
+                    args.publisher,
+                    args.key,
+                    args.operator_key,
+                    args.attestation,
+                )
+                print(f"published to {Path(args.registry_dir) / 'index.json'}")
+                print(f"index sequence: {index['sequence']}")
             return 0
     except (RegistryError, SignatureError, FileNotFoundError, ValueError) as e:
         print(f"registry error: {e}", file=sys.stderr)
@@ -854,7 +939,13 @@ def build_parser() -> argparse.ArgumentParser:
                    help="QEMU acceleration (default: $BOXES_QEMU_ACCEL or auto)")
     v.add_argument("--keep", action="store_true", help="keep the container for debugging")
     v.add_argument("--allow-untrusted", action="store_true", dest="allow_untrusted",
-                   help="run registry-installed recipes in Docker (QEMU is refused until the sandbox)")
+                   help="run registry-installed recipes in the locked Docker sandbox (QEMU is refused)")
+    v.add_argument("--sandbox", choices=["trusted", "locked"], default=None,
+                   help="Docker sandbox profile; untrusted recipes require locked")
+    v.add_argument("--attest-key", default=None, dest="attest_key",
+                   help="sign a per-recipe verification attestation with this private key")
+    v.add_argument("--attestation-dir", default=None, dest="attestation_dir",
+                   help="directory for signed attestations (default: attestations)")
     v.add_argument("--jobs", type=int, default=min(4, os.cpu_count() or 1),
                    help="parallel containers when verifying --all")
     v.add_argument("--apt-snapshot", default=None, dest="apt_snapshot",
@@ -934,10 +1025,12 @@ def build_parser() -> argparse.ArgumentParser:
     ri.add_argument("spec", help="id or id@version")
     ri.add_argument("--registry", default=None)
     ri.add_argument("--force", action="store_true")
+    ri.add_argument("--require-attestation", action="store_true", dest="require_attestation")
     ri.set_defaults(func=cmd_registry)
 
     ru = rg_sub.add_parser("update", help="update installed recipes")
     ru.add_argument("--registry", default=None)
+    ru.add_argument("--require-attestation", action="store_true", dest="require_attestation")
     ru.set_defaults(func=cmd_registry)
 
     run = rg_sub.add_parser("uninstall", help="remove an installed recipe")
@@ -946,16 +1039,31 @@ def build_parser() -> argparse.ArgumentParser:
 
     rv = rg_sub.add_parser("verify", help="verify installed bundles and the signed index")
     rv.add_argument("--offline", action="store_true", help="verify only the lock and files")
+    rv.add_argument("--require-attestation", action="store_true", dest="require_attestation")
     rv.set_defaults(func=cmd_registry)
 
     rp = rg_sub.add_parser("publish", help="publish a recipe to a static registry")
     rp.add_argument("recipe_dir")
-    rp.add_argument("--registry-dir", required=True, dest="registry_dir")
+    rp.add_argument("--registry-dir", default=None, dest="registry_dir")
+    rp.add_argument("--url", default=None, help="publish through the registry HTTP API")
     rp.add_argument("--publisher", required=True)
     rp.add_argument("--key", required=True, help="publisher private key")
     rp.add_argument("--operator-key", default=None, dest="operator_key",
                     help="operator private key (defaults to --key)")
+    rp.add_argument("--attestation", default=None,
+                    help="signed verification attestation JSON")
     rp.set_defaults(func=cmd_registry)
+
+    rv = rg_sub.add_parser("serve", help="serve a static registry over HTTP")
+    rv.add_argument("directory")
+    rv.add_argument("--bind", default="127.0.0.1")
+    rv.add_argument("--port", type=int, default=8000)
+    rv.add_argument("--operator-key", default=None, dest="operator_key",
+                    help="enable POST /v1/publish and sign indexes with this key")
+    rv.add_argument("--trust-publisher", action="append", default=None,
+                    dest="trust_publisher",
+                    help="public key allowed to publish (repeatable)")
+    rv.set_defaults(func=cmd_registry)
 
     return p
 

@@ -29,6 +29,9 @@ for os in ubuntu-22.04 debian-12 ubuntu-24.04; do
     boxes verify --all --os "$os" --jobs 4
 done
 
+echo "== locked sandbox smoke =="
+boxes verify --recipe web-env-leak-creds --sandbox locked --no-cache
+
 echo "== docker integration =="
 BOXES_DOCKER_TESTS=1 python3 -m pytest -m docker -q
 

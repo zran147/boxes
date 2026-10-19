@@ -68,3 +68,13 @@ def test_registry_list_empty_cli(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("BOXES_REGISTRY_DIR", str(tmp_path / "installed"))
     assert main(["registry", "list"]) == 0
     capsys.readouterr()
+
+
+def test_attestation_requires_recipe_mode(capsys):
+    assert main(["verify", "--machine", "--attest-key", "k"]) == 2
+    assert "per recipe" in capsys.readouterr().err
+
+
+def test_attestation_dir_requires_key(capsys):
+    assert main(["verify", "--recipe", "x", "--attestation-dir", "a"]) == 2
+    assert "requires --attest-key" in capsys.readouterr().err

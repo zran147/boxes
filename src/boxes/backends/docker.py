@@ -12,13 +12,33 @@ from typing import Mapping
 
 from .base import ExecResult
 
+# Minimal capabilities for a target that must create users, start sshd/vsftpd,
+# bind low ports, and simulate setuid/sudo privesc inside the container.
+TARGET_CAPS = (
+    "AUDIT_WRITE",
+    "CHOWN",
+    "DAC_OVERRIDE",
+    "FOWNER",
+    "FSETID",
+    "KILL",
+    "NET_BIND_SERVICE",
+    "SETFCAP",
+    "SETGID",
+    "SETPCAP",
+    "SETUID",
+    "SYS_CHROOT",
+)
+# The attacker needs no privileged capabilities; NET_RAW keeps nmap usable.
+ATTACKER_CAPS = ("NET_RAW",)
+
 
 class DockerBackend:
     name = "docker"
     fidelity = "container"
 
-    def __init__(self, binary: str = "docker") -> None:
+    def __init__(self, binary: str = "docker", sandbox: str = "trusted") -> None:
         self.binary = binary
+        self.sandbox = sandbox
 
     # -- helpers -----------------------------------------------------------
 
@@ -89,6 +109,16 @@ class DockerBackend:
         ]
         if alias:
             args += ["--network-alias", alias]
+        if self.sandbox == "locked":
+            attacker = name.startswith("boxes-attacker")
+            caps = ATTACKER_CAPS if attacker else TARGET_CAPS
+            args += ["--cap-drop", "ALL"]
+            for cap in caps:
+                args += ["--cap-add", cap]
+            args += ["--ulimit", "nofile=4096:4096"]
+            if attacker:
+                # The target must keep setuid semantics for sudo/SUID recipes.
+                args += ["--security-opt", "no-new-privileges"]
         args += [
             "--memory",
             "1g",

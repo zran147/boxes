@@ -14,7 +14,7 @@ def get_backend(name: str = "docker", **kwargs) -> Backend:
     if name == "docker":
         from .docker import DockerBackend
 
-        return DockerBackend()
+        return DockerBackend(**kwargs)
     if name == "qemu":
         from .qemu import QemuBackend
 

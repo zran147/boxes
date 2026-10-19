@@ -8,3 +8,4 @@ dist/
 .boxes-cache/
 .boxes-vm/
 .boxes-registry/
+attestations/

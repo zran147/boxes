@@ -152,6 +152,12 @@ def test_untrusted_guard(reg, capsys):
     assert not _untrusted_check(args, [recipe])
     assert "refusing QEMU" in capsys.readouterr().err
 
+    args.backend = "docker"
+    args.allow_untrusted = True
+    args.sandbox = "trusted"
+    assert not _untrusted_check(args, [recipe])
+    assert "require the locked" in capsys.readouterr().err
+
 
 def test_signing_roundtrip(tmp_path):
     keys = signing.keygen(tmp_path / "k")
@@ -160,3 +166,60 @@ def test_signing_roundtrip(tmp_path):
     signature = signing.sign_json(private, {"hello": "world"})
     assert signing.verify_json(public, {"hello": "world"}, signature)
     assert not signing.verify_json(public, {"hello": "moon"}, signature)
+
+
+def test_publish_and_install_with_attestation(reg, tmp_path):
+    from boxes import attest, signing
+    from boxes.recipe import load_recipe
+    from boxes.runner import StepResult, VerifyResult
+
+    recipe = load_recipe(reg.source / "recipe.yaml")
+    result = VerifyResult(label=recipe.id)
+    result.add(StepResult(recipe.id, "provision", True, 0, ""))
+    result.add(StepResult(recipe.id, "poc", True, 0, ""))
+    body = attest.build(
+        recipe, result, image_id="img", os_name="ubuntu-22.04",
+        backend="container", sandbox="locked",
+        started_at="a", finished_at="b",
+    )
+    signed = attest.sign(body, reg.keys["private"])
+    path = attest.write(signed, tmp_path / "att")
+    registry_client.publish(
+        reg.source, reg.registry, "tester", reg.keys["private"],
+        attestation_path=path,
+    )
+    entry = registry_client.install("reg-test")
+    assert entry["attestation"]["result"] == "pass"
+    lock = registry_client.load_lock()
+    assert lock["recipes"][0]["attestation"]
+    checked = registry_client.verify_installed()
+    assert checked[0]["errors"] == []
+    assert checked[0]["attested"] is True
+
+
+def test_attestation_must_match_bundle(reg, tmp_path):
+    from boxes import attest
+    from boxes.recipe import load_recipe
+    from boxes.runner import StepResult, VerifyResult
+
+    recipe = load_recipe(reg.source / "recipe.yaml")
+    result = VerifyResult(label=recipe.id)
+    result.add(StepResult(recipe.id, "provision", True, 0, ""))
+    body = attest.build(
+        recipe, result, image_id="img", os_name="ubuntu-22.04",
+        backend="container", sandbox="locked",
+        started_at="a", finished_at="b",
+    )
+    body["files"] = {}
+    signed = attest.sign(body, reg.keys["private"])
+    path = attest.write(signed, tmp_path / "att")
+    with pytest.raises(registry_client.RegistryError, match="files"):
+        registry_client.publish(
+            reg.source, reg.registry, "tester", reg.keys["private"],
+            attestation_path=path,
+        )
+
+
+def test_require_attestation(reg):
+    with pytest.raises(registry_client.RegistryError, match="no attestation"):
+        registry_client.install("reg-test", require_attestation=True)
