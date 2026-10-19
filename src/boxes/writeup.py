@@ -33,7 +33,10 @@ def _steps_markdown(plan: Plan, manifest: Manifest, start: int = 0, end: int | N
         else:
             tag = ""
         lines.append(f"### Step {i} — `{r.id}` ({r.kind}){tag}")
-        lines.append(f"`v{r.version}` · difficulty `{r.difficulty}`")
+        lines.append(
+            f"`v{r.version}` · difficulty {r.difficulty}/10 "
+            f"({difficulty_mod.band(r.difficulty)})"
+        )
         lines.append("")
         if r.description:
             lines.append(r.description)
@@ -53,8 +56,9 @@ def render_markdown(plan: Plan, manifest: Manifest) -> str:
     lines.append(f"- plan seed: `{plan.seed}`")
     lines.append(f"- build seed: `{manifest.build_seed}`")
     lines.append(
-        f"- difficulty: **{summary['machine']}** "
-        f"(user {summary['user']}, root {summary['root']})"
+        f"- difficulty: **{summary['machine']}/10 ({summary['band']})** · "
+        f"user {summary['user']}/10 ({summary['user_band']}) · "
+        f"root {summary['root']}/10 ({summary['root_band']})"
     )
     lines.append(
         f"- length: user {summary['length']['user']} / root {summary['length']['root']}"
@@ -90,7 +94,8 @@ def render_machine_markdown(paths: list[Plan], manifests: list[Manifest]) -> str
     if prefix:
         shared = difficulty_mod.report(first)
         lines.append(
-            f"- shared prefix: {prefix} step(s) · user difficulty **{shared['user']}**"
+            f"- shared prefix: {prefix} step(s) · user difficulty "
+            f"**{shared['user']}/10 ({shared['user_band']})**"
         )
     lines.append("")
     if prefix:
@@ -101,8 +106,10 @@ def render_machine_markdown(paths: list[Plan], manifests: list[Manifest]) -> str
         summary = difficulty_mod.report(plan)
         lines.append(f"## Path {index}" + (" branch" if prefix else ""))
         lines.append(
-            f"plan seed `{plan.seed}` · difficulty **{summary['machine']}** "
-            f"(user {summary['user']}, root {summary['root']}) · "
+            f"plan seed `{plan.seed}` · difficulty "
+            f"**{summary['machine']}/10 ({summary['band']})** · "
+            f"user {summary['user']}/10 ({summary['user_band']}) · "
+            f"root {summary['root']}/10 ({summary['root_band']}) · "
             f"services {', '.join(str(p) for p in plan.ports)}"
         )
         lines.append(

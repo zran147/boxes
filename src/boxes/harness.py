@@ -22,7 +22,7 @@ from .planner import PRELUDE, TARGET, _applications, initial_state
 from .recipe import Recipe
 
 SAMPLE_OS = "ubuntu-22.04"
-SAMPLE_OSES = ["ubuntu-22.04", "debian-12", "rocky-9"]
+SAMPLE_OSES = ["ubuntu-22.04", "ubuntu-24.04", "debian-12", "rocky-9"]
 _PLACEHOLDER = re.compile(r"\{([A-Za-z0-9_.]+)\}")
 _ID = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
@@ -107,7 +107,7 @@ def _render(template: str, ctx: dict) -> str:
     return _PLACEHOLDER.sub(lambda m: str(ctx.get(m.group(1), m.group(0))), template)
 
 
-def check_recipe(recipe: Recipe, seed: int = 0) -> Result:
+def check_recipe(recipe: Recipe, seed: int = 0, os_name: str | None = None) -> Result:
     result = Result(recipe_id=recipe.id)
     rng = Random(seed)
 
@@ -115,12 +115,19 @@ def check_recipe(recipe: Recipe, seed: int = 0) -> Result:
         result.errors.append(f"recipe id must match {_ID.pattern!r}")
     if not recipe.provides:
         result.errors.append("recipe must declare at least one provides fact")
-    os_name = next((o for o in SAMPLE_OSES if recipe.applies_to(o)), None)
-    if os_name is None:
-        result.errors.append(
-            f"recipe os {recipe.os} matches none of the sample OSes {SAMPLE_OSES}"
-        )
-        return result
+    if os_name is not None:
+        if not recipe.applies_to(os_name):
+            result.errors.append(
+                f"recipe os {recipe.os} does not apply to {os_name}"
+            )
+            return result
+    else:
+        os_name = next((o for o in SAMPLE_OSES if recipe.applies_to(o)), None)
+        if os_name is None:
+            result.errors.append(
+                f"recipe os {recipe.os} matches none of the sample OSes {SAMPLE_OSES}"
+            )
+            return result
 
     result.errors.extend(lint([recipe]))
 

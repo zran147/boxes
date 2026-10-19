@@ -31,9 +31,10 @@ from pathlib import Path
 
 from .base import ExecResult
 from .. import accel as accel_mod
+from ..osinfo import DEFAULT_OS, profile, vm_store
 
 QEMU = "qemu-system-x86_64"
-BOOT_TIMEOUT = 600
+BOOT_TIMEOUT = int(os.environ.get("BOXES_VM_BOOT_TIMEOUT", "600"))
 TAP_MAC = "52:54:00:be:ef:01"
 PROV_MAC = "52:54:00:be:ef:02"
 
@@ -49,9 +50,11 @@ class QemuBackend:
         key: Path | None = None,
         user: str = "boxes",
         accel: str | None = None,
+        os_name: str = DEFAULT_OS,
     ) -> None:
-        root = Path(__file__).resolve().parents[3]
-        self.store = Path(store or os.environ.get("BOXES_VM_STORE", root / ".boxes-vm"))
+        profile(os_name)  # validate
+        self.os_name = os_name
+        self.store = Path(store or vm_store(os_name))
         self.base = Path(base or os.environ.get("BOXES_VM_BASE", self.store / "base-prebaked.qcow2"))
         self.key = Path(key or os.environ.get("BOXES_VM_KEY", self.store / "boxes_key"))
         self.accel = accel_mod.resolve(accel)

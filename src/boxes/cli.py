@@ -13,6 +13,7 @@ import yaml
 
 from . import accel as accel_mod
 from . import difficulty as difficulty_mod
+from . import toolkit
 from .backends import get_backend
 from .cache import Cache, machine_key
 from .harness import check_recipe
@@ -33,7 +34,8 @@ from .planner import generate, generate_paths, satisfies
 from .registry import load_registry, select
 from .runner import verify_machine, verify_paths, verify_recipes
 from .scaffold import create_recipe
-from .vm_image import SUPPORTED_OS, prepare_base
+from .osinfo import SUPPORTED_OS, vm_store
+from .vm_image import prepare_base
 from .writeup import paths_to_dict, plan_to_dict, render_machine_markdown, render_markdown
 
 DEFAULT_RECIPES = Path("recipes")
@@ -246,7 +248,7 @@ def _prepare_backend(args):
         except ValueError as e:
             print(str(e), file=sys.stderr)
             return None
-        backend = get_backend("qemu", accel=selected)
+        backend = get_backend("qemu", accel=selected, os_name=args.os)
     else:
         backend = get_backend(args.backend)
     if not backend.available():
@@ -283,9 +285,9 @@ def _prepare_backend(args):
 
 def cmd_image(args) -> int:
     if args.backend == "qemu":
-        if args.os != SUPPORTED_OS:
+        if args.os not in SUPPORTED_OS:
             print(
-                f"the VM base currently supports only {SUPPORTED_OS}, not {args.os}",
+                f"unsupported VM OS {args.os}; supported: {', '.join(SUPPORTED_OS)}",
                 file=sys.stderr,
             )
             return 2
@@ -295,10 +297,11 @@ def cmd_image(args) -> int:
             print(str(e), file=sys.stderr)
             return 2
         res = prepare_base(
-            Path(os.environ.get("BOXES_VM_STORE", str(PROJECT_ROOT / ".boxes-vm"))),
+            vm_store(args.os),
             rebuild=args.rebuild,
             base=Path(os.environ["BOXES_VM_BASE"]) if os.environ.get("BOXES_VM_BASE") else None,
             accel=selected,
+            os_name=args.os,
         )
         if not res.ok:
             print("VM base image prep failed:", file=sys.stderr)
@@ -327,6 +330,42 @@ def cmd_image(args) -> int:
     return 0
 
 
+def cmd_image_tools(args) -> int:
+    print("apt: " + ", ".join(toolkit.apt_packages()))
+    print("pip: " + (", ".join(toolkit.pip_packages()) or "(none)"))
+    print("commands: " + ", ".join(sorted(toolkit.commands())))
+    if not args.check:
+        return 0
+
+    import shlex
+    import shutil
+    import subprocess
+
+    if not shutil.which("docker"):
+        print("docker is not installed", file=sys.stderr)
+        return 2
+    script = "missing=\n"
+    for command in sorted(toolkit.commands()):
+        script += (
+            f"command -v {shlex.quote(command)} >/dev/null 2>&1 "
+            f'|| missing="$missing {command}"\n'
+        )
+    script += 'if [ -n "$missing" ]; then echo "missing:$missing" >&2; exit 1; fi\n'
+    script += 'echo "toolkit ok"\n'
+    res = subprocess.run(
+        ["docker", "run", "--rm", attacker_image(), "sh", "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    if res.returncode != 0:
+        print(res.stdout.strip())
+        print(res.stderr.strip(), file=sys.stderr)
+        return 1
+    print(res.stdout.strip())
+    return 0
+
+
 def cmd_verify(args) -> int:
     if args.multi_path is not None:
         if not args.machine:
@@ -338,9 +377,9 @@ def cmd_verify(args) -> int:
     if any((args.difficulty, args.user_difficulty, args.root_difficulty)) and not args.machine:
         print("difficulty filters only apply to --machine", file=sys.stderr)
         return 2
-    if args.backend == "qemu" and args.os != SUPPORTED_OS:
+    if args.backend == "qemu" and args.os not in SUPPORTED_OS:
         print(
-            f"the VM base currently supports only {SUPPORTED_OS}, not {args.os}",
+            f"unsupported VM OS {args.os}; supported: {', '.join(SUPPORTED_OS)}",
             file=sys.stderr,
         )
         return 2
@@ -405,7 +444,9 @@ def cmd_verify(args) -> int:
                 print(
                     f"path {index} (seed {path.seed}): "
                     + " -> ".join(s.recipe.id for s in path.steps)
-                    + f"  [difficulty {summary['machine']}; user {summary['user']}; root {summary['root']}]"
+                    + f"  [difficulty {summary['machine']}/10 ({summary['band']}); "
+                    + f"user {summary['user']}/10 {summary['user_band']}; "
+                    + f"root {summary['root']}/10 {summary['root_band']}]"
                 )
                 key = machine_key(path, manifest, image_id, backend.fidelity)
                 entries.append((path, manifest, key, cache.get(key) is not None))
@@ -456,8 +497,9 @@ def cmd_verify(args) -> int:
         print("chain: " + " -> ".join(s.recipe.id for s in plan.steps))
         summary = difficulty_mod.report(plan)
         print(
-            f"difficulty: {summary['machine']} (user {summary['user']}, "
-            f"root {summary['root']})"
+            f"difficulty: {summary['machine']}/10 ({summary['band']}; "
+            f"user {summary['user']}/10 {summary['user_band']}, "
+            f"root {summary['root']}/10 {summary['root_band']})"
         )
 
         key = machine_key(plan, manifest, image_id, backend.fidelity)
@@ -489,10 +531,13 @@ def cmd_verify(args) -> int:
         if not r.verifiable:
             print(f"SKIP {r.id} (symbolic only: no provision/poc)")
             continue
+        if not r.applies_to(args.os):
+            print(f"SKIP {r.id} (does not apply to {args.os})")
+            continue
         if not r.supports(backend.fidelity):
             print(f"SKIP {r.id} (no PoC for the {backend.fidelity} backend)")
             continue
-        fixture = check_recipe(r, args.seed).fixture
+        fixture = check_recipe(r, args.seed, os_name=args.os).fixture
         if fixture is None:
             print(f"FAIL {r.id}: harness produced no fixture", file=sys.stderr)
             harness_failures += 1
@@ -624,6 +669,9 @@ def build_parser() -> argparse.ArgumentParser:
     ib.add_argument("--accel", choices=["auto", "kvm", "tcg"], default=None,
                     help="QEMU acceleration (default: $BOXES_QEMU_ACCEL or auto)")
     ib.set_defaults(func=cmd_image)
+    it = img_sub.add_parser("tools", help="list or check the attacker toolkit")
+    it.add_argument("--check", action="store_true", help="run the commands in boxes/attacker")
+    it.set_defaults(func=cmd_image_tools)
 
     v = sub.add_parser("verify", help="build and verify recipes or a machine")
     v.add_argument("--recipe", help="verify one recipe in isolation (L2)")

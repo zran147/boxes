@@ -60,13 +60,14 @@ def test_username_rejects_unknown_style_via_loader(tmp_path):
         "version: 1.0.0\n"
         "kind: discovery\n"
         'os: ["ubuntu-*"]\n'
-        "difficulty: easy\n"
+        "difficulty: 2\n"
         "requires: ['open_port($h, 80)']\n"
         "provides: ['knows(a, $u)']\n"
         "params:\n"
         "  u:\n"
         "    type: username\n"
         '    styles: ["moon"]\n'
+        "tools: [curl, ssh]\n"
         "provision: ./provision.sh\n"
         "poc:\n  context: target\n  container: ./poc.sh\n"
         "walkthrough: hi\n"
@@ -87,7 +88,7 @@ def test_loader_accepts_typed_params(tmp_path):
         "version: 1.0.0\n"
         "kind: discovery\n"
         'os: ["ubuntu-*"]\n'
-        "difficulty: 0.1\n"
+        "difficulty: 2\n"
         "requires: ['open_port($h, 80)']\n"
         "provides: ['knows(a, $u)']\n"
         "params:\n"
@@ -104,14 +105,16 @@ def test_loader_accepts_typed_params(tmp_path):
         "    type: choice\n"
         "    values: [80, 443]\n"
         "    weights: [1, 3]\n"
+        "tools: [curl, ssh]\n"
         "provision: ./provision.sh\n"
         "poc:\n  context: target\n  container: ./poc.sh\n"
         "walkthrough: hi\n"
     )
     r = load_recipe(d / "recipe.yaml")
-    assert r.difficulty == "easy"
+    assert r.difficulty == 2
     assert r.params["u"].type == "username"
     assert r.params["n"].min == 1 and r.params["n"].max == 9 and r.params["n"].step == 2
     assert r.params["b"].type == "bool"
     assert r.params["c"].values == [80, 443]
     assert r.params["c"].weights == [1.0, 3.0]
+    assert r.tools == ["curl", "ssh"]

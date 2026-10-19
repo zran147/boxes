@@ -2,8 +2,8 @@ id: package-probe
 version: 1.0.0
 kind: discovery
 description: "Provisioning smoke test: install a package through the proxy."
-os: ["ubuntu-*"]
-difficulty: easy
+os: ["ubuntu-*", "debian-*"]
+difficulty: 1
 provision: ./provision.sh
 poc:
   context: target

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from .facts import vars_in
 from .recipe import Recipe
+from .toolkit import commands as toolkit_commands
 
 PRELUDE_PREDS = {"open_port", "os", "host"}
 
@@ -45,6 +46,12 @@ def lint(recipes: list[Recipe]) -> list[str]:
                 errs.append(
                     f"{r.id}: open_port needs a concrete integer port, got {f}"
                 )
+
+        unknown_tools = sorted(set(r.tools or []) - toolkit_commands())
+        if unknown_tools:
+            errs.append(
+                f"{r.id}: unknown attacker tool(s): {', '.join(unknown_tools)}"
+            )
 
         if r.actor and r.actor.startswith("$"):
             var = r.actor[1:]

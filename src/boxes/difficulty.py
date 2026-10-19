@@ -1,57 +1,63 @@
-"""Difficulty bands and per-machine difficulty.
+"""Difficulty levels and per-machine difficulty.
 
-Difficulty is a property of the hardest recipe in a phase, not a sum of recipe
-scores. Tedium (length, discoveries, service count, context switches) is
-reported separately as ``shape`` so a long easy machine is not mislabelled as
-hard.
+Recipes carry a whole-number level from 1 (trivial) to 10 (hard). A machine's
+difficulty is the hardest recipe, never a sum or mean. The user phase and root
+phase are reported separately.
+
+The CLI filters use provisional bands:
+
+    easy:   1–3
+    medium: 4–6
+    hard:   7–10
+
+Tedium (length, discoveries, service count, context switches) is reported as
+``shape`` and is not folded into the difficulty level.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-BANDS = ("easy", "medium", "hard")
-_RANK = {band: index for index, band in enumerate(BANDS)}
+MIN_LEVEL = 1
+MAX_LEVEL = 10
+BAND_RANGES = {
+    "easy": (1, 3),
+    "medium": (4, 6),
+    "hard": (7, 10),
+}
+BANDS = tuple(BAND_RANGES)
+BAND_LEVELS = {"easy": 2, "medium": 5, "hard": 8}
 
 
-def normalize(value: Any) -> str:
-    """Accept a band or a legacy 0..1 number and return a band."""
-    if isinstance(value, str):
-        band = value.strip().lower()
-        if band in _RANK:
-            return band
-        raise ValueError(
-            f"difficulty must be one of {BANDS} or a number in [0, 1], got {value!r}"
-        )
-    try:
-        score = float(value)
-    except (TypeError, ValueError):
-        raise ValueError(
-            f"difficulty must be one of {BANDS} or a number in [0, 1], got {value!r}"
-        )
-    if not 0.0 <= score <= 1.0:
-        raise ValueError(f"difficulty must be within [0, 1], got {score}")
-    if score < 1 / 3:
-        return "easy"
-    if score < 2 / 3:
-        return "medium"
-    return "hard"
+def normalize(value: Any) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"recipe difficulty must be an integer {MIN_LEVEL}-{MAX_LEVEL}, got {value!r}")
+    if not MIN_LEVEL <= value <= MAX_LEVEL:
+        raise ValueError(f"recipe difficulty must be within {MIN_LEVEL}-{MAX_LEVEL}, got {value}")
+    return value
 
 
-def max_band(bands) -> str | None:
-    items = [band for band in bands if band is not None]
-    if not items:
+def band(level: int) -> str | None:
+    if level is None:
         return None
-    return max(items, key=lambda band: _RANK[band])
+    for name, (low, high) in BAND_RANGES.items():
+        if low <= level <= high:
+            return name
+    return None
+
+
+def max_level(levels) -> int:
+    items = [level for level in levels if level is not None]
+    return max(items) if items else 0
 
 
 def report(plan) -> dict:
     steps = plan.steps
     user_steps = steps[: plan.user_index + 1]
     root_steps = steps[plan.user_index + 1 : plan.root_index + 1]
-    user = max_band(step.recipe.difficulty for step in user_steps)
-    root = max_band(step.recipe.difficulty for step in root_steps)
-    machine = max_band([user, root])
+    user = max_level(step.recipe.difficulty for step in user_steps)
+    root = max_level(step.recipe.difficulty for step in root_steps)
+    machine = max(user, root)
     switches = sum(
         1
         for left, right in zip(steps, steps[1:])
@@ -61,6 +67,9 @@ def report(plan) -> dict:
         "machine": machine,
         "user": user,
         "root": root,
+        "band": band(machine),
+        "user_band": band(user),
+        "root_band": band(root),
         # shape, not difficulty: how long/tedious the route is
         "length": {"user": len(user_steps), "root": len(root_steps)},
         "services": len(plan.ports),
@@ -77,7 +86,7 @@ def matches(
 ) -> bool:
     summary = report(plan)
     return (
-        (machine is None or summary["machine"] == machine)
-        and (user is None or summary["user"] == user)
-        and (root is None or summary["root"] == root)
+        (machine is None or summary["band"] == machine)
+        and (user is None or summary["user_band"] == user)
+        and (root is None or summary["root_band"] == root)
     )

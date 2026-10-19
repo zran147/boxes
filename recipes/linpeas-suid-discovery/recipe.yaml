@@ -3,7 +3,7 @@ version: 1.0.0
 kind: discovery
 description: Post-exploitation enumeration finds an unusual SUID binary.
 os: ["ubuntu-*", "debian-*"]
-difficulty: easy
+difficulty: 3
 provision: ./provision.sh
 poc:
   context: target

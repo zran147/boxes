@@ -3,7 +3,8 @@ version: 1.0.0
 kind: foothold
 description: Unauthenticated RCE on the exposed web application yields a reverse shell.
 os: ["ubuntu-*", "debian-*"]
-difficulty: hard
+difficulty: 8
+tools: [curl]
 provision: ./provision.sh
 poc:
   context: attacker

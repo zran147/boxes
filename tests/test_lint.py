@@ -13,7 +13,7 @@ def _mk(**kw):
         version="1.0.0",
         kind="discovery",
         os=["ubuntu-*"],
-        difficulty=0.1,
+        difficulty=2,
         requires=[parse_fact("open_port($h, 80)")],
         provides=[parse_fact("knows(a, $v)")],
         yields=[],
@@ -95,3 +95,8 @@ def test_poc_context_is_validated():
     r = _mk(poc_context="moon")
     errs = lint([r])
     assert any("poc.context" in e for e in errs)
+
+
+def test_unknown_attacker_tool_rejected():
+    errs = lint([_mk(tools=["definitely-not-a-tool"])])
+    assert any("unknown attacker tool" in e for e in errs)

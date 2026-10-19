@@ -32,7 +32,7 @@ def test_scaffold_rejects_bad_kind(tmp_path):
 
 
 def test_scaffold_uses_custom_os_and_difficulty(tmp_path):
-    path = create_recipe(tmp_path, "custom", "privesc", os_patterns=["debian-*"], difficulty=0.7)
+    path = create_recipe(tmp_path, "custom", "privesc", os_patterns=["debian-*"], difficulty="hard")
     text = path.read_text()
     assert "debian-*" in text
-    assert "difficulty: hard" in text
+    assert "difficulty: 8" in text

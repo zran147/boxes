@@ -3,7 +3,7 @@ version: 1.0.0
 kind: privesc
 description: Abuse the discovered SUID binary (GTFOBins) to escalate to root.
 os: ["ubuntu-*", "debian-*"]
-difficulty: hard
+difficulty: 8
 provision: ./provision.sh
 poc:
   context: target

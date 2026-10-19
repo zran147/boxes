@@ -3,7 +3,7 @@ version: 1.0.0
 kind: privesc
 description: "A SUID find binary gives a root shell."
 os: ["ubuntu-*", "debian-*"]
-difficulty: easy
+difficulty: 3
 provision: ./provision.sh
 poc:
   context: target

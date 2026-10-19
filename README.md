@@ -15,9 +15,11 @@ It works in three layers:
 3. **Check** — a plan is only emitted if every precondition was met earlier, and
    a recipe is only considered proven if its PoC exits 0.
 
-Status: **P0–P2 done.** P3 is in progress: difficulty bands and typed
-parameters/usernames are implemented. Themes are deferred until the recipe
-catalogue is larger (>50 recipes); the attacker toolkit, more distros, and CI/scale are next.
+Status: **P0–P3 done.** Numeric recipe difficulty (1–10) with easy/medium/hard
+CLI filters, typed parameters/usernames, the manifest-driven attacker toolkit,
+the Ubuntu 22.04/24.04 + Debian 12 matrix, and the Docker acceptance script
+are implemented. Themes are deferred until the catalogue is larger (>50
+recipes); planner-scale tuning follows as it grows. P4 (registry) is next.
 
 ## Quick start
 
@@ -107,6 +109,11 @@ VM recipes (QEMU-verified; TCG on this host):
 - `vm-kernel-probe` — `poc.vm` smoke test (PID 1 is systemd, kernel boot image).
 - `package-probe` — provisioning-proxy smoke test.
 
+Supported distros: **Ubuntu 22.04, Ubuntu 24.04, and Debian 12**. All container
+recipes verify 13/13 on each. QEMU has cloud-image profiles for all three, with
+verified VM chains on Ubuntu 22.04 and Debian 12; Ubuntu 24.04's first boot is
+slow under TCG, so use KVM or a longer `BOXES_VM_BOOT_TIMEOUT` there.
+
 Multi-path (`--multi-path N`) generates N paths sharing the user phase. On one
 VM the shared prefix is provisioned once, then each root branch runs with a
 fresh attacker; Docker verifies each path in its own fast container.
@@ -144,10 +151,21 @@ or `token` (randomised identifiers/filenames).
 
 ### Difficulty
 
-Recipes carry a band: `easy`, `medium`, or `hard` (legacy 0..1 values are
-mapped). A machine's difficulty is the **hardest recipe**, not a sum or mean.
-The user phase and root phase are reported separately, and both are shown in
-the walkthrough/JSON:
+Recipes carry a whole-number level from **1 (trivial) to 10 (hard)**. A
+machine's difficulty is the **hardest recipe**, not a sum or mean. The user
+phase and root phase are reported separately as levels, and both are shown in
+the walkthrough/JSON.
+
+The CLI filters are still bands with provisional boundaries:
+
+| band | levels |
+|---|---|
+| easy | 1–3 |
+| medium | 4–6 |
+| hard | 7–10 |
+
+If these boundaries prove too coarse once the catalogue is larger, the filters
+can switch to numeric ranges without changing recipes.
 
 ```bash
 boxes gen --difficulty medium --to-user 2 --to-root 1 --seed 42
@@ -181,7 +199,7 @@ is verified on its own fast container. It is only valid with `gen` and
 
 ## Recipe tooling
 
-`boxes new <id> --kind <kind> --difficulty easy|medium|hard` scaffolds a `recipe.yaml` that already passes lint
+`boxes new <id> --kind <kind> --difficulty easy|medium|hard` scaffolds a `recipe.yaml` (the band maps to level 2/5/8) that already passes lint
 and the harness. `boxes test-recipe <id>` tests a recipe in isolation, with no
 machine:
 
@@ -201,15 +219,16 @@ id: my-recipe
 version: 1.0.0
 kind: privesc            # discovery | service-access | creds | foothold | privesc
 os: ["ubuntu-*"]
-difficulty: medium       # easy | medium | hard
+difficulty: 5            # whole number 1–10
 yields: ["root"]         # omit unless this step reaches a flag
+tools: [curl]            # attacker-side commands (optional)
 requires:
   - access_shell($u)
 provides:
   - access_root()
 params:
   binary:
-    type: choice         # choice | password | token
+    type: choice         # choice | int | bool | username | password | token
     values: ["/usr/bin/find"]
 walkthrough: |
   ... uses `{binary}` and `{u}` ...
@@ -302,6 +321,7 @@ poc:
   context: attacker          # attacker | target
   container: ./poc.sh        # exactly one of container/vm
 actor: $u                    # target-context principal (default: attacker)
+tools: [curl, sshpass]       # attacker commands (optional)
 poc_timeout: 120
 ```
 
@@ -324,6 +344,53 @@ That is how a chain proves composability, not just isolated steps.
 
 `boxes verify --machine` requires every step to have provision+poc; otherwise it
 reports which are symbolic-only instead of silently skipping them.
+
+### Distros
+
+The default is Ubuntu 22.04; `--os` selects the target image/base:
+
+```bash
+boxes image build --os debian-12
+boxes verify --all --os debian-12 --jobs 4
+
+boxes image build --backend qemu --os debian-12
+boxes verify --machine --backend qemu --os debian-12 \
+    --to-user 2 --to-root 1 --seed 0
+```
+
+Container bases exist for Ubuntu 22.04, Ubuntu 24.04, and Debian 12. QEMU uses
+a matching cloud image and a per-OS store: Ubuntu 22.04 keeps `.boxes-vm/`, the
+other profiles use `.boxes-vm/<os>/`. The cloud image is SHA-verified against
+the distro's `SHA256SUMS`/`SHA512SUMS` and the download is resumable.
+
+Ubuntu 24.04 cloud-init is noticeably heavier under TCG. The prebake/runtime
+boot timeout defaults to 900s for prep and 600s for machines; override with
+`BOXES_VM_BOOT_TIMEOUT`.
+
+### Attacker toolkit
+
+The attacker image is generated from `images/attacker/tools.yaml` into
+`tools.txt`/`pip.txt`. It includes web tooling (`ffuf`, `gobuster`, `dirb`,
+`nikto`, `sqlmap`), credentials (`hydra`, `john`, `hashcat`), SMB/LDAP/impacket,
+and binary-analysis tools (`gdb`, `ltrace`, `strace`, `gcc`).
+
+```bash
+boxes image build --os ubuntu-22.04     # also builds the attacker image
+boxes image tools                      # list apt/pip/commands
+boxes image tools --check              # run every command in the image
+```
+
+Recipes declare `tools: [curl, sshpass]`; `boxes lint` rejects tools that are
+not in the manifest.
+
+### CI / acceptance
+
+```bash
+scripts/acceptance.sh             # unit, lint, 3-OS Docker matrix, Docker tests
+scripts/acceptance.sh --with-vm   # also QEMU prep + a Debian VM chain
+```
+
+The Docker integration test suite is parametrized over the three distros.
 
 Scripts are arbitrary code. First-party recipes run as root inside a limited,
 network-isolated container. A public registry must sandbox harder.
@@ -381,14 +448,17 @@ boxes image build --backend qemu --os ubuntu-22.04 --accel kvm
 BOXES_QEMU_ACCEL=tcg boxes verify --machine --backend qemu --seed 0
 ```
 
-The cloud image download is resumable (`jammy-base.img.part`), validated as a
-qcow2, and checked against the current `SHA256SUMS`. The VM store defaults to
-`.boxes-vm`; override it with `BOXES_VM_STORE` (and the base path with
+The cloud image download is resumable (`<codename>-base.img.part`), validated
+as a qcow2, and checked against the distro's `SHA256SUMS`/`SHA512SUMS`. The VM
+store defaults to `.boxes-vm` for Ubuntu 22.04 and `.boxes-vm/<os>` for the
+other profiles; override the root with `BOXES_VM_STORE` (and the base path with
 `BOXES_VM_BASE`).
 
-Measured on a TCG-only host: pre-bake ≈ 5–9 min depending on the cloud image
-download, cold verify ≈ 2–3 min, warm cache ≈ 0.5–1 s, `savevm` ≈ 2 s,
-`loadvm` ≈ 7 s. KVM hosts use KVM for both prep and verification.
+Measured on a TCG-only host: pre-bake ranges from ~2.5 min (Debian 12, warm
+network) to much longer for Ubuntu 24.04's first cloud-init boot; cold verify
+≈ 1–3 min, warm cache ≈ 0.5–1 s, `savevm` ≈ 2 s, `loadvm` ≈ 7 s. KVM hosts use
+KVM for both prep and verification. Raise `BOXES_VM_BOOT_TIMEOUT` for slow
+TCG boots.
 
 Snapshots (`savevm`/`loadvm`) let a provisioned VM be restored. VM verification
 takes a `pre-poc` snapshot after provisioning (and sealing), runs the PoCs, then
@@ -529,5 +599,5 @@ The sudoers rule must allow the helper subcommands, hence `boxes net *`.
 | **P0** — symbolic generation | Facts + unification, typed predicates, recipes, bounded-length planner, `open_port` prelude, causal connectivity, two-seed manifest, lint, scaffold, per-recipe harness | **Done** |
 | **P1** — container fast path | Pluggable backend, target + attacker images, internal network, shared attacker container, provision/poc contract, assets, L2 + L3 verification, content-addressed cache, parallel jobs, real recipes | **Done** |
 | **P2** — fidelity + branching | QEMU (KVM auto/TCG fallback) + prebaked base + snapshots; one PoC per recipe (`poc.container` XOR `poc.vm`); pre-PoC snapshot/restore; shared-prefix DAG with one-VM verification and attacker reset; hybrid provisioning proxy (durable apt cache + squid + artifact store) with egress-only phase and seal; apt snapshot pinning; VM base checksum/resume/store overrides; proxy health/cleanup | **Done** |
-| **P3** — coherence + scale | In progress: difficulty bands (machine = hardest recipe; separate user/root; length/shape), typed params and human-looking usernames, weighted choices. Next: complete attacker toolkit, Debian 12/Ubuntu 24.04, planner scale/CI/docs. Themes deferred until the catalogue is large enough (>50 recipes). | **In progress** |
+| **P3** — coherence + scale | Numeric difficulty 1–10 (machine = hardest recipe; separate user/root; provisional easy/medium/hard CLI bands; length/shape separate); typed params and human-looking usernames; weighted choices; manifest-driven attacker toolkit with lint/check; Ubuntu 22.04/24.04 + Debian 12 Docker (13/13 each); QEMU profiles and per-OS stores; Docker integration matrix and acceptance script. Themes deferred until the catalogue is large enough (>50 recipes); planner-scale tuning as it grows. | **Done** |
 | **P4** — registry | Recipe registry API + client, signed recipes, sandboxed execution, per-recipe CI | Planned |

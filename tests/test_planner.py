@@ -90,7 +90,7 @@ def test_satisfies_backtracks_over_credential_choices():
 
     def mk(rid, kind, requires, provides, yields=()):
         return Recipe(
-            id=rid, version="1.0.0", kind=kind, os=["ubuntu-*"], difficulty=0.1,
+            id=rid, version="1.0.0", kind=kind, os=["ubuntu-*"], difficulty=2,
             requires=[parse_fact(x) for x in requires],
             provides=[parse_fact(x) for x in provides],
             yields=list(yields), params={}, walkthrough="",
@@ -122,7 +122,7 @@ def test_is_relevant_allows_fan_out_and_merge():
 
     def step(rid, requires, provides, yields=()):
         r = Recipe(
-            id=rid, version="1.0.0", kind="privesc", os=["ubuntu-*"], difficulty=0.1,
+            id=rid, version="1.0.0", kind="privesc", os=["ubuntu-*"], difficulty=2,
             requires=[parse_fact(x) for x in requires],
             provides=[parse_fact(x) for x in provides],
             yields=list(yields), params={}, walkthrough="",
@@ -149,7 +149,7 @@ def test_is_relevant_rejects_dead_end_branch():
 
     def step(rid, requires, provides, yields=()):
         r = Recipe(
-            id=rid, version="1.0.0", kind="privesc", os=["ubuntu-*"], difficulty=0.1,
+            id=rid, version="1.0.0", kind="privesc", os=["ubuntu-*"], difficulty=2,
             requires=[parse_fact(x) for x in requires],
             provides=[parse_fact(x) for x in provides],
             yields=list(yields), params={}, walkthrough="",
@@ -216,17 +216,17 @@ def test_difficulty_is_the_hardest_recipe(pool):
 
     easy = generate(pool, OS, 2, 1, 0, machine_difficulty="easy")
     assert easy is not None
-    assert report(easy)["machine"] == "easy"
+    assert report(easy)["band"] == "easy"
 
     medium = generate(pool, OS, 2, 1, 0, machine_difficulty="medium")
     assert medium is not None
-    assert report(medium)["machine"] == "medium"
+    assert report(medium)["band"] == "medium"
 
     hard = generate(pool, OS, 1, 1, 0, machine_difficulty="hard")
     assert hard is not None
     hard_summary = report(hard)
-    assert hard_summary["machine"] == "hard"
-    assert hard_summary["user"] == "hard"
+    assert hard_summary["band"] == "hard"
+    assert hard_summary["user_band"] == "hard"
 
 
 def test_user_and_root_difficulty_are_separate(pool):
@@ -234,10 +234,10 @@ def test_user_and_root_difficulty_are_separate(pool):
 
     user_hard = generate(pool, OS, 1, 1, 0, user_difficulty="hard")
     assert user_hard is not None
-    assert report(user_hard)["user"] == "hard"
+    assert report(user_hard)["user_band"] == "hard"
 
     root_hard = generate(pool, OS, 2, 2, 0, root_difficulty="hard")
     assert root_hard is not None
-    assert report(root_hard)["user"] == "easy"
-    assert report(root_hard)["root"] == "hard"
-    assert report(root_hard)["machine"] == "hard"
+    assert report(root_hard)["user_band"] == "easy"
+    assert report(root_hard)["root_band"] == "hard"
+    assert report(root_hard)["band"] == "hard"

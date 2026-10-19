@@ -3,7 +3,8 @@ version: 1.0.0
 kind: foothold
 description: Reuse discovered credentials to obtain an interactive SSH shell.
 os: ["ubuntu-*", "debian-*"]
-difficulty: easy
+difficulty: 2
+tools: [sshpass, ssh]
 provision: ./provision.sh
 poc:
   context: attacker

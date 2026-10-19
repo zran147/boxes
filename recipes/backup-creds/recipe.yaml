@@ -2,8 +2,9 @@ id: backup-creds
 version: 1.0.0
 kind: creds
 description: "A backup service leaks SSH credentials."
-os: ["ubuntu-*"]
-difficulty: easy
+os: ["ubuntu-*", "debian-*"]
+difficulty: 2
+tools: [curl]
 provision: ./provision.sh
 poc:
   context: attacker

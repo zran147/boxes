@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from .difficulty import normalize as normalize_difficulty
+from .difficulty import BAND_LEVELS, normalize as normalize_difficulty
 
 _ID = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
@@ -124,6 +124,13 @@ def create_recipe(
         raise ValueError(f"recipe id must match {_ID.pattern!r}, got {rid!r}")
     if kind not in _TEMPLATES:
         raise ValueError(f"kind must be one of {sorted(_TEMPLATES)}, got {kind!r}")
+    if isinstance(difficulty, str):
+        try:
+            difficulty = BAND_LEVELS[difficulty]
+        except KeyError as e:
+            raise ValueError(
+                f"difficulty band must be one of {sorted(BAND_LEVELS)}, got {difficulty!r}"
+            ) from e
     difficulty = normalize_difficulty(difficulty)
 
     root = Path(root)

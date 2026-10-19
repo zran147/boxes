@@ -2,8 +2,8 @@ id: vm-kernel-probe
 version: 1.0.0
 kind: discovery
 description: "VM-only probe: confirm the product really booted a VM kernel."
-os: ["ubuntu-*"]
-difficulty: easy
+os: ["ubuntu-*", "debian-*"]
+difficulty: 1
 provision: ./provision.sh
 poc:
   context: target

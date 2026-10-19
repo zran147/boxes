@@ -34,7 +34,7 @@ def make_recipe(tmp_path, rid, *, actor=None, provision=True, poc=True, requires
         version="1.0.0",
         kind="privesc",
         os=["ubuntu-*"],
-        difficulty=0.2,
+        difficulty=3,
         requires=requires or [parse_fact("access_shell($u)")],
         provides=[parse_fact("access_root()")],
         yields=["root"],
@@ -62,7 +62,7 @@ def fixture(**ctx) -> Fixture:
 
 def test_env_keys_are_sanitised():
     r = Recipe(
-        id="r", version="1.0.0", kind="discovery", os=["ubuntu-*"], difficulty=0.1,
+        id="r", version="1.0.0", kind="discovery", os=["ubuntu-*"], difficulty=2,
         requires=[parse_fact("open_port($h, 80)")], provides=[parse_fact("knows(a, $v)")],
         yields=[], params={}, walkthrough="",
     )
@@ -75,7 +75,7 @@ def test_env_keys_are_sanitised():
 
 def test_actor_resolution():
     rec = Recipe(
-        id="r", version="1.0.0", kind="privesc", os=["ubuntu-*"], difficulty=0.1,
+        id="r", version="1.0.0", kind="privesc", os=["ubuntu-*"], difficulty=2,
         requires=[parse_fact("access_shell($u)")], provides=[parse_fact("access_root()")],
         yields=["root"], params={}, walkthrough="", actor="$u",
     )
@@ -191,7 +191,7 @@ def test_missing_actor_is_reported_not_raised(tmp_path):
 
 def test_reserved_env_keys_win_over_params():
     rec = Recipe(
-        id="r", version="1.0.0", kind="discovery", os=["ubuntu-*"], difficulty=0.1,
+        id="r", version="1.0.0", kind="discovery", os=["ubuntu-*"], difficulty=2,
         requires=[parse_fact("open_port($h, 80)")], provides=[parse_fact("knows(a, $v)")],
         yields=[], params={}, walkthrough="",
     )
@@ -300,7 +300,7 @@ def _vm_recipe(tmp_path, rid):
     (d / "provision.sh").write_text(f"echo provision-{rid}\n")
     (d / "poc.sh").write_text(f"echo poc-{rid}\n")
     return Recipe(
-        id=rid, version="1.0.0", kind="privesc", os=["ubuntu-*"], difficulty=0.1,
+        id=rid, version="1.0.0", kind="privesc", os=["ubuntu-*"], difficulty=2,
         requires=[parse_fact("open_port($h, 80)")],
         provides=[parse_fact("access_root()")], yields=["root"],
         params={}, walkthrough="", provision="provision.sh",

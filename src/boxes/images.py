@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from . import toolkit
 from .backends.base import Backend, ExecResult
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -42,4 +43,5 @@ def ensure_image(backend: Backend, os_name: str, rebuild: bool = False) -> ExecR
 
 
 def ensure_attacker_image(backend: Backend, rebuild: bool = False) -> ExecResult:
+    toolkit.write_context()
     return _ensure(backend, attacker_image(), image_context("attacker"), rebuild)

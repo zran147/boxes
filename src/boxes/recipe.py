@@ -38,7 +38,7 @@ class Recipe:
     version: str
     kind: str
     os: list[str]
-    difficulty: str
+    difficulty: int
     requires: list[Fact]
     provides: list[Fact]
     yields: list[str]
@@ -55,6 +55,7 @@ class Recipe:
     poc_context: str = "target"  # "target" | "attacker" (run from the attacker box)
     poc_timeout: int = 120
     assets: str | None = None  # directory copied to /opt/boxes/<id>/ in the target
+    tools: list[str] | None = None  # attacker-side commands the recipe needs
     path: Path | None = None
 
     def __post_init__(self) -> None:
@@ -233,6 +234,9 @@ def load_recipe(path: Path) -> Recipe:
     if poc_timeout <= 0:
         raise ValueError(f"{rid}: poc_timeout must be positive, got {poc_timeout}")
 
+    tools = data.get("tools") or []
+    if not isinstance(tools, list) or any(not isinstance(t, str) or not t for t in tools):
+        raise ValueError(f"{rid}: tools must be a list of non-empty strings")
     assets = data.get("assets")
     if assets is None and (base_dir / "files").is_dir():
         assets = "./files"
@@ -244,7 +248,7 @@ def load_recipe(path: Path) -> Recipe:
         version=version,
         kind=kind,
         os=[str(p) for p in os_list],
-        difficulty=data.get("difficulty", "medium"),
+        difficulty=data.get("difficulty", 5),
         requires=requires,
         provides=provides,
         yields=list(yields),
@@ -258,5 +262,6 @@ def load_recipe(path: Path) -> Recipe:
         poc_context=poc_context,
         poc_timeout=poc_timeout,
         assets=str(assets) if assets else None,
+        tools=[str(t) for t in tools],
         path=path,
     )

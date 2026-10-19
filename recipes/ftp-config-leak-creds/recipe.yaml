@@ -3,7 +3,8 @@ version: 1.0.0
 kind: creds
 description: Enumerate the accessible FTP share and find leaked SSH credentials.
 os: ["ubuntu-*", "debian-*"]
-difficulty: medium
+difficulty: 5
+tools: [curl]
 provision: ./provision.sh
 poc:
   context: attacker

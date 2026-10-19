@@ -31,7 +31,7 @@ def test_unresolved_walkthrough_placeholder_is_caught():
         version="1.0.0",
         kind="discovery",
         os=["ubuntu-*"],
-        difficulty=0.1,
+        difficulty=2,
         requires=[parse_fact("open_port($h, 80)")],
         provides=[parse_fact("knows(path, $v)")],
         yields=[],
@@ -49,7 +49,7 @@ def test_os_mismatch_is_caught():
         version="1.0.0",
         kind="discovery",
         os=["windows-*"],
-        difficulty=0.1,
+        difficulty=2,
         requires=[parse_fact("open_port($h, 80)")],
         provides=[parse_fact("knows(path, $v)")],
         yields=[],
@@ -68,7 +68,7 @@ def test_harness_picks_a_matching_sample_os():
         version="1.0.0",
         kind="discovery",
         os=["debian-*"],
-        difficulty=0.1,
+        difficulty=2,
         requires=[parse_fact("open_port($h, 80)")],
         provides=[parse_fact("knows(path, $v)")],
         yields=[],
@@ -89,7 +89,7 @@ def test_ineffective_guard_is_caught():
         version="1.0.0",
         kind="privesc",
         os=["ubuntu-*"],
-        difficulty=0.1,
+        difficulty=2,
         requires=[parse_fact("access_shell($u)"), parse_fact("access_shell($u)")],
         provides=[parse_fact("access_root()")],
         yields=["root"],
@@ -98,3 +98,10 @@ def test_ineffective_guard_is_caught():
     )
     res = check_recipe(r)
     assert any("still applies without" in e for e in res.errors)
+
+
+def test_explicit_os_is_used_for_the_fixture():
+    r = next(r for r in load_registry(RECIPES) if r.applies_to("debian-12"))
+    res = check_recipe(r, os_name="debian-12")
+    assert res.ok, res.errors
+    assert res.fixture.os == "debian-12"

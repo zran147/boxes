@@ -3,7 +3,7 @@ version: 1.0.0
 kind: privesc
 description: A sudoers misconfiguration allows running an interpreter as root.
 os: ["ubuntu-*", "debian-*"]
-difficulty: medium
+difficulty: 5
 provision: ./provision.sh
 poc:
   context: target

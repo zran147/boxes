@@ -1,8 +1,8 @@
 """Prepare a pre-baked VM base image.
 
-Boots the Ubuntu cloud image once with a cloud-init seed, waits for first boot
-to finish, then powers off. The resulting overlay is used as the backing image
-for every machine, so per-machine boots skip cloud-init's first-boot work.
+Boots a cloud image (Ubuntu 22.04/24.04 or Debian 12) once with a cloud-init
+seed, waits for first boot to finish, then powers off. The resulting overlay is
+the backing image for every machine, so per-machine boots skip first-boot work.
 """
 
 from __future__ import annotations
@@ -17,12 +17,9 @@ from pathlib import Path
 
 from . import accel as accel_mod
 from .backends.base import ExecResult
+from .osinfo import OSProfile, profile
 
-CLOUD_URL = "https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img"
-CLOUD_SHA256SUMS = "https://cloud-images.ubuntu.com/jammy/current/SHA256SUMS"
-CLOUD_IMAGE_NAME = "jammy-server-cloudimg-amd64.img"
 USER = "boxes"
-SUPPORTED_OS = "ubuntu-22.04"
 
 
 def _run(args: list[str], *, timeout: int = 120) -> ExecResult:
@@ -39,22 +36,24 @@ def _valid_qcow2(path: Path) -> bool:
     return _run(["qemu-img", "info", "-f", "qcow2", str(path)], timeout=30).ok
 
 
-def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
+def _digest_file(path: Path, algo: str) -> str:
+    digest = hashlib.new(algo)
     with open(path, "rb") as fh:
         for chunk in iter(lambda: fh.read(1 << 20), b""):
             digest.update(chunk)
     return digest.hexdigest()
 
 
-def _expected_cloud_sha() -> str | None:
-    res = _run(["curl", "-fLsS", "--max-time", "120", CLOUD_SHA256SUMS], timeout=150)
+def _expected_cloud_sha(prof: OSProfile) -> tuple[str, str] | None:
+    res = _run(
+        ["curl", "-fLsS", "--max-time", "120", prof.cloud_sums], timeout=150
+    )
     if not res.ok:
         return None
     for line in res.stdout.splitlines():
         parts = line.split()
-        if len(parts) == 2 and parts[1].lstrip("*") == CLOUD_IMAGE_NAME:
-            return parts[0]
+        if len(parts) == 2 and parts[1].lstrip("*") == prof.cloud_image:
+            return prof.cloud_sums_algo, parts[0]
     return None
 
 
@@ -100,11 +99,15 @@ def _wait_ssh(port: int, key: Path, timeout: int) -> bool:
 def prepare_base(
     store: Path,
     rebuild: bool = False,
-    boot_timeout: int = 600,
+    boot_timeout: int | None = None,
     base: Path | None = None,
     accel: str | None = None,
+    os_name: str = "ubuntu-22.04",
 ) -> ExecResult:
+    prof = profile(os_name)
     selected = accel_mod.resolve(accel)
+    if boot_timeout is None:
+        boot_timeout = int(os.environ.get("BOXES_VM_BOOT_TIMEOUT", "900"))
     store = Path(store)
     store.mkdir(parents=True, exist_ok=True)
     prebaked = Path(base) if base else store / "base-prebaked.qcow2"
@@ -124,15 +127,15 @@ def prepare_base(
         if not res.ok:
             return res
 
-    cloud = store / "jammy-base.img"
+    cloud = store / f"{prof.codename}-base.img"
     if cloud.is_file() and not _valid_qcow2(cloud):
         cloud.unlink()
     if not cloud.is_file():
-        tmp = store / "jammy-base.img.part"
+        tmp = store / f"{prof.codename}-base.img.part"
         last = ExecResult(1, "", "download did not run")
         for _ in range(4):
             last = _run(
-                ["curl", "-fL", "-sS", "-C", "-", "-o", str(tmp), CLOUD_URL],
+                ["curl", "-fL", "-sS", "-C", "-", "-o", str(tmp), prof.cloud_url],
                 timeout=1800,
             )
             if last.ok:
@@ -143,8 +146,8 @@ def prepare_base(
         if not _valid_qcow2(tmp):
             tmp.unlink(missing_ok=True)
             return ExecResult(1, "", "downloaded VM image is not a valid qcow2")
-        expected = _expected_cloud_sha()
-        if expected and _sha256_file(tmp) != expected:
+        expected = _expected_cloud_sha(prof)
+        if expected and _digest_file(tmp, expected[0]) != expected[1]:
             tmp.unlink(missing_ok=True)
             return ExecResult(
                 1, "", "downloaded VM image checksum mismatch; rerun the prep"
@@ -167,7 +170,9 @@ def prepare_base(
         "runcmd:\n"
         '  - [ sh, -c, "echo ready > /var/lib/boxes-ready" ]\n'
     )
-    (store / "meta-data").write_text("instance-id: boxes-vm-1\nlocal-hostname: boxes-vm\n")
+    (store / "meta-data").write_text(
+        f"instance-id: boxes-{prof.codename}-1\nlocal-hostname: boxes-{prof.codename}\n"
+    )
     seed = store / "seed.iso"
     res = _run(["cloud-localds", str(seed), str(store / "user-data"), str(store / "meta-data")])
     if not res.ok:

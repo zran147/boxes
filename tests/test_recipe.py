@@ -15,7 +15,7 @@ def _write(tmp_path: Path, poc_block: str, extra: str = ""):
         "version: 1.0.0\n"
         "kind: foothold\n"
         'os: ["ubuntu-*"]\n'
-        "difficulty: 0.1\n"
+        "difficulty: 2\n"
         'yields: ["user"]\n'
         "requires:\n"
         "  - open_port($h, 22)\n"
@@ -77,6 +77,6 @@ def test_invalid_poc_context_is_rejected(tmp_path):
         _write(tmp_path, "poc:\n  container: ./poc.sh\n  context: moon")
 
 
-def test_numeric_difficulty_maps_to_a_band(tmp_path):
+def test_recipe_difficulty_is_a_numeric_level(tmp_path):
     r = _write(tmp_path, "poc:\n  context: attacker\n  container: ./poc.sh")
-    assert r.difficulty == "easy"
+    assert r.difficulty == 2
