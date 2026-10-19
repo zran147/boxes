@@ -110,9 +110,9 @@ VM recipes (QEMU-verified; TCG on this host):
 - `package-probe` — provisioning-proxy smoke test.
 
 Supported distros: **Ubuntu 22.04, Ubuntu 24.04, and Debian 12**. All container
-recipes verify 13/13 on each. QEMU has cloud-image profiles for all three, with
-verified VM chains on Ubuntu 22.04 and Debian 12; Ubuntu 24.04's first boot is
-slow under TCG, so use KVM or a longer `BOXES_VM_BOOT_TIMEOUT` there.
+recipes verify 13/13 on each, and all three have verified QEMU profiles and VM
+chains. Ubuntu 24.04 is slow under TCG (prebake ~24 min, chain ~9 min); use KVM
+or `BOXES_VM_BOOT_TIMEOUT=1800` there.
 
 Multi-path (`--multi-path N`) generates N paths sharing the user phase. On one
 VM the shared prefix is provisioned once, then each root branch runs with a
@@ -363,9 +363,10 @@ a matching cloud image and a per-OS store: Ubuntu 22.04 keeps `.boxes-vm/`, the
 other profiles use `.boxes-vm/<os>/`. The cloud image is SHA-verified against
 the distro's `SHA256SUMS`/`SHA512SUMS` and the download is resumable.
 
-Ubuntu 24.04 cloud-init is noticeably heavier under TCG. The prebake/runtime
-boot timeout defaults to 900s for prep and 600s for machines; override with
-`BOXES_VM_BOOT_TIMEOUT`.
+Ubuntu 24.04 cloud-init is noticeably heavier under TCG (prebake ~24 min,
+probe ~8m44s, chain ~9m22s). The prebake/runtime boot timeout defaults to 900s
+for prep and 600s for machines; for noble TCG use
+`BOXES_VM_BOOT_TIMEOUT=1800`.
 
 ### Attacker toolkit
 
@@ -391,6 +392,8 @@ scripts/acceptance.sh --with-vm   # also QEMU prep + a Debian VM chain
 ```
 
 The Docker integration test suite is parametrized over the three distros.
+`--with-vm` preps all three QEMU profiles, runs the VM-only probes, and runs
+Debian and Ubuntu 24.04 chains (slow on TCG).
 
 Scripts are arbitrary code. First-party recipes run as root inside a limited,
 network-isolated container. A public registry must sandbox harder.
@@ -455,10 +458,10 @@ other profiles; override the root with `BOXES_VM_STORE` (and the base path with
 `BOXES_VM_BASE`).
 
 Measured on a TCG-only host: pre-bake ranges from ~2.5 min (Debian 12, warm
-network) to much longer for Ubuntu 24.04's first cloud-init boot; cold verify
-≈ 1–3 min, warm cache ≈ 0.5–1 s, `savevm` ≈ 2 s, `loadvm` ≈ 7 s. KVM hosts use
-KVM for both prep and verification. Raise `BOXES_VM_BOOT_TIMEOUT` for slow
-TCG boots.
+network) to ~24 min for Ubuntu 24.04's first cloud-init boot; cold verification
+ranges from ~1–3 min (Ubuntu 22.04/Debian 12) to ~9 min (Ubuntu 24.04); warm
+cache ≈ 0.5–1 s, `savevm` ≈ 2 s, `loadvm` ≈ 7 s. KVM hosts use KVM for both prep
+and verification. Raise `BOXES_VM_BOOT_TIMEOUT` for slow TCG boots.
 
 Snapshots (`savevm`/`loadvm`) let a provisioned VM be restored. VM verification
 takes a `pre-poc` snapshot after provisioning (and sealing), runs the PoCs, then
@@ -599,5 +602,5 @@ The sudoers rule must allow the helper subcommands, hence `boxes net *`.
 | **P0** — symbolic generation | Facts + unification, typed predicates, recipes, bounded-length planner, `open_port` prelude, causal connectivity, two-seed manifest, lint, scaffold, per-recipe harness | **Done** |
 | **P1** — container fast path | Pluggable backend, target + attacker images, internal network, shared attacker container, provision/poc contract, assets, L2 + L3 verification, content-addressed cache, parallel jobs, real recipes | **Done** |
 | **P2** — fidelity + branching | QEMU (KVM auto/TCG fallback) + prebaked base + snapshots; one PoC per recipe (`poc.container` XOR `poc.vm`); pre-PoC snapshot/restore; shared-prefix DAG with one-VM verification and attacker reset; hybrid provisioning proxy (durable apt cache + squid + artifact store) with egress-only phase and seal; apt snapshot pinning; VM base checksum/resume/store overrides; proxy health/cleanup | **Done** |
-| **P3** — coherence + scale | Numeric difficulty 1–10 (machine = hardest recipe; separate user/root; provisional easy/medium/hard CLI bands; length/shape separate); typed params and human-looking usernames; weighted choices; manifest-driven attacker toolkit with lint/check; Ubuntu 22.04/24.04 + Debian 12 Docker (13/13 each); QEMU profiles and per-OS stores; Docker integration matrix and acceptance script. Themes deferred until the catalogue is large enough (>50 recipes); planner-scale tuning as it grows. | **Done** |
+| **P3** — coherence + scale | Numeric difficulty 1–10 (machine = hardest recipe; separate user/root; provisional easy/medium/hard CLI bands; length/shape separate); typed params and human-looking usernames; weighted choices; manifest-driven attacker toolkit with lint/check; Ubuntu 22.04/24.04 + Debian 12 Docker (13/13 each); QEMU profiles, per-OS stores, and verified VM chains on all three; Docker integration matrix and acceptance script. Themes deferred until the catalogue is large enough (>50 recipes); planner-scale tuning as it grows. | **Done** |
 | **P4** — registry | Recipe registry API + client, signed recipes, sandboxed execution, per-recipe CI | Planned |

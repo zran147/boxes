@@ -34,10 +34,15 @@ BOXES_DOCKER_TESTS=1 python3 -m pytest -m docker -q
 
 if [[ "${1:-}" == "--with-vm" ]]; then
     echo "== qemu =="
-    for os in ubuntu-22.04 debian-12; do
-        boxes image build --backend qemu --os "$os"
+    for os in ubuntu-22.04 debian-12 ubuntu-24.04; do
+        BOXES_VM_BOOT_TIMEOUT=1800 boxes image build --backend qemu --os "$os"
     done
-    boxes verify --recipe vm-kernel-probe --backend qemu --os debian-12 --no-cache
-    boxes verify --machine --backend qemu --os debian-12 \
+    for os in ubuntu-22.04 debian-12 ubuntu-24.04; do
+        BOXES_VM_BOOT_TIMEOUT=1800 boxes verify --recipe vm-kernel-probe \
+            --backend qemu --os "$os" --no-cache
+    done
+    BOXES_VM_BOOT_TIMEOUT=1800 boxes verify --machine --backend qemu --os debian-12 \
+        --to-user 2 --to-root 1 --seed 0 --no-cache
+    BOXES_VM_BOOT_TIMEOUT=1800 boxes verify --machine --backend qemu --os ubuntu-24.04 \
         --to-user 2 --to-root 1 --seed 0 --no-cache
 fi
