@@ -8,6 +8,7 @@ import os
 import random
 import sys
 from datetime import datetime, timezone
+from uuid import uuid4
 from pathlib import Path
 
 import yaml
@@ -47,6 +48,7 @@ from .writeup import paths_to_dict, plan_to_dict, render_machine_markdown, rende
 
 DEFAULT_RECIPES = Path("recipes")
 CACHE_FILE = PROJECT_ROOT / ".boxes-cache" / "verifications.json"
+BUILD_DIR = PROJECT_ROOT / ".boxes-builds"
 
 
 def _load_all_recipes(args) -> list:
@@ -712,6 +714,162 @@ def cmd_verify(args) -> int:
     return 0 if harness_failures == 0 and ok == len(results) else 1
 
 
+
+def _destroy_build(backend, result) -> None:
+    if result.attacker:
+        from .backends import get_backend as _gb
+        _gb("docker").destroy(result.attacker)
+    if result.container:
+        backend.destroy(result.container)
+    if result.network:
+        backend.network_destroy(result.network)
+
+
+def _load_build(name: str) -> dict:
+    path = BUILD_DIR / f"{name}.json"
+    if not path.is_file():
+        raise FileNotFoundError(f"no build named {name!r}")
+    return json.loads(path.read_text())
+
+
+def cmd_build(args) -> int:
+    if args.backend != "qemu":
+        print("build currently requires --backend qemu (the VM is the product)", file=sys.stderr)
+        return 2
+    if args.os not in SUPPORTED_OS:
+        print(f"unsupported VM OS {args.os}; supported: {', '.join(SUPPORTED_OS)}", file=sys.stderr)
+        return 2
+    from . import proxy as proxy_mod
+
+    if not proxy_mod.services_ok():
+        print(
+            "warning: provisioning proxy is down or unhealthy; recipes that "
+            "install packages will fail (run `boxes proxy up`)",
+            file=sys.stderr,
+        )
+    backend = _prepare_backend(args)
+    if backend is None:
+        return 2
+    docker = get_backend("docker")
+    if not docker.available():
+        print("build needs Docker for the attacker environment (`boxes/attacker`)", file=sys.stderr)
+        return 2
+    recipes = _load_all_recipes(args)
+    errs = lint(recipes)
+    if errs:
+        print("recipe lint failed:", file=sys.stderr)
+        for e in errs:
+            print(f"  - {e}", file=sys.stderr)
+        return 2
+    pool = select(recipes, args.os, fidelity="vm")
+    if not pool:
+        print(f"no recipes apply to os {args.os}", file=sys.stderr)
+        return 2
+    plan_seed = args.seed if args.seed is not None else random.randrange(1, 2**31)
+    build_seed = args.build_seed if args.build_seed is not None else random.randrange(1, 2**31)
+    plan = generate(
+        pool,
+        args.os,
+        args.to_user,
+        args.to_root,
+        plan_seed,
+        machine_difficulty=args.difficulty,
+        user_difficulty=args.user_difficulty,
+        root_difficulty=args.root_difficulty,
+    )
+    if plan is None:
+        print("could not generate a machine for those depths" + _difficulty_note(args), file=sys.stderr)
+        return 1
+    if not satisfies(plan):
+        print("internal error: generated plan does not satisfy itself", file=sys.stderr)
+        return 3
+    if not _untrusted_check(args, [step.recipe for step in plan.steps]):
+        return 2
+    manifest = materialize(plan, build_seed)
+    print(f"plan seed={plan_seed} build seed={build_seed}")
+    print("chain: " + " -> ".join(step.recipe.id for step in plan.steps))
+    summary = difficulty_mod.report(plan)
+    print(
+        f"difficulty: {summary['machine']}/10 ({summary['band']}; "
+        f"user {summary['user']}/10 {summary['user_band']}, "
+        f"root {summary['root']}/10 {summary['root_band']})"
+    )
+    print("provisioning, verifying, and restoring the pre-PoC snapshot...")
+    result = verify_machine(
+        plan,
+        manifest,
+        backend,
+        image_tag(args.os),
+        keep=True,
+        apt_snapshot=args.apt_snapshot,
+        needs_attacker=True,
+    )
+    _print_verify(result)
+    if not result.ok:
+        print("build failed; cleaning up the deployment", file=sys.stderr)
+        _destroy_build(backend, result)
+        return 1
+    name = args.name or f"machine-{plan_seed}-{uuid4().hex[:8]}"
+    record_path = BUILD_DIR / f"{name}.json"
+    if record_path.exists():
+        print(f"build {name!r} already exists", file=sys.stderr)
+        _destroy_build(backend, result)
+        return 2
+    BUILD_DIR.mkdir(parents=True, exist_ok=True)
+    record = {
+        "schema": 1,
+        "name": name,
+        "backend": "qemu",
+        "os": args.os,
+        "accel": getattr(backend, "accel", None),
+        "sandbox": getattr(backend, "sandbox", "trusted"),
+        "target": result.container,
+        "attacker": result.attacker,
+        "network": result.network,
+        "plan_seed": plan_seed,
+        "build_seed": build_seed,
+        "created_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+    }
+    record_path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
+    info = backend.connection_info(result.container) if hasattr(backend, "connection_info") else {}
+    print()
+    print(f"built: {name}")
+    print(f"target: {result.container}")
+    if info.get("ssh_port"):
+        print(f"target ssh: ssh -p {info['ssh_port']} <user>@127.0.0.1")
+    if result.attacker:
+        print(f"attacker: docker exec -it {result.attacker} bash")
+    if result.host and result.host not in ("target", "127.0.0.1"):
+        print(f"target from attacker: {result.host}")
+    print("the target is running at its pre-PoC snapshot")
+    print(f"stop it with: boxes destroy {name}")
+    return 0
+
+
+def cmd_destroy(args) -> int:
+    try:
+        record = _load_build(args.name)
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        print(str(e), file=sys.stderr)
+        return 2
+    backend = get_backend(
+        record.get("backend", "qemu"),
+        os_name=record.get("os", "ubuntu-22.04"),
+        accel=record.get("accel"),
+        sandbox=record.get("sandbox", "trusted"),
+    )
+    if record.get("attacker"):
+        get_backend("docker").destroy(record["attacker"])
+    if record.get("target"):
+        backend.destroy(record["target"])
+    if record.get("network"):
+        backend.network_destroy(record["network"])
+    path = BUILD_DIR / f"{args.name}.json"
+    path.unlink(missing_ok=True)
+    print(f"destroyed {args.name}")
+    return 0
+
+
 def cmd_registry(args) -> int:
     try:
         if args.registry_command == "keygen":
@@ -1011,6 +1169,31 @@ def build_parser() -> argparse.ArgumentParser:
     v.add_argument("--clear-cache", action="store_true", dest="clear_cache",
                    help="clear the verification cache before running")
     v.set_defaults(func=cmd_verify)
+
+    b = sub.add_parser("build", help="build, verify, and deploy a VM for play")
+    b.add_argument("--name", default=None, help="deployment name (default: generated)")
+    b.add_argument("--os", default="ubuntu-22.04")
+    b.add_argument("--to-user", type=int, default=3, dest="to_user")
+    b.add_argument("--to-root", type=int, default=2, dest="to_root")
+    b.add_argument("--seed", type=int, default=None, help="plan/chain seed (default: random)")
+    b.add_argument("--build-seed", type=int, default=None, dest="build_seed",
+                   help="parameter seed (default: random)")
+    b.add_argument("--difficulty", choices=["easy", "medium", "hard"], default=None)
+    b.add_argument("--user-difficulty", choices=["easy", "medium", "hard"], default=None,
+                   dest="user_difficulty")
+    b.add_argument("--root-difficulty", choices=["easy", "medium", "hard"], default=None,
+                   dest="root_difficulty")
+    b.add_argument("--backend", default="qemu", choices=["qemu", "docker"])
+    b.add_argument("--accel", choices=["auto", "kvm", "tcg"], default=None)
+    b.add_argument("--rebuild", action="store_true")
+    b.add_argument("--apt-snapshot", default=None, dest="apt_snapshot")
+    b.add_argument("--allow-untrusted", action="store_true", dest="allow_untrusted",
+                   help="reserved for future non-QEMU build backends")
+    b.set_defaults(func=cmd_build)
+
+    d = sub.add_parser("destroy", help="destroy a deployment created by build")
+    d.add_argument("name")
+    d.set_defaults(func=cmd_destroy)
 
     net = sub.add_parser("net", help="privileged VM network helper (run with sudo)")
     net_sub = net.add_subparsers(dest="net_command", required=True)

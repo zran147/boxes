@@ -317,6 +317,35 @@ boxes verify --all
 boxes verify --machine --to-user 3 --to-root 2 --seed 0
 ```
 
+### Build and play a VM
+
+`verify` is a test: it runs the PoCs and tears the machine down (unless
+`--keep`). To deploy a machine for an actual player, use `boxes build`:
+
+```bash
+boxes build --to-user 3 --to-root 2
+```
+
+It generates a random chain, provisions it in QEMU, runs the verification PoCs,
+restores the **pre-PoC snapshot**, and leaves the target and attacker running.
+The output includes:
+
+- the target's SSH host-forward (`ssh -p <port> <user>@127.0.0.1`);
+- the attacker container (`docker exec -it <name> bash`);
+- the target address from the attacker (`10.66.1.2`).
+
+From the attacker container, scan and attack the target normally. The target is
+already sealed onto the host-only attack network; generated credentials and
+flags are left for the player to enumerate. Build defaults to QEMU and needs a
+pre-baked base and the Docker attacker image.
+
+Use `--seed/--build-seed` for a reproducible machine and `--name` for a stable
+deployment name. Stop and remove it with:
+
+```bash
+boxes destroy <name>
+```
+
 The target base carries `vsftpd`, `openssh-server`, `openssh-client`, and
 `sshpass` per distro. The attacker image (`boxes/attacker:latest`) is generated
 from the toolkit manifest; see [Attacker toolkit](#attacker-toolkit).

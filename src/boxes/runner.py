@@ -58,6 +58,8 @@ class VerifyResult:
     kept: bool = False
     cached: bool = False
     attacker: str | None = None
+    network: str | None = None
+    host: str | None = None
 
     def add(self, step: StepResult) -> None:
         self.steps.append(step)
@@ -442,6 +444,8 @@ def verify_recipe(
         return result
     result.container = setup.target
     result.attacker = setup.attacker
+    result.network = setup.network
+    result.host = setup.host
     result.kept = keep
 
     snapshot_ok = False
@@ -488,6 +492,7 @@ def verify_machine(
     image: str,
     keep: bool = False,
     apt_snapshot: str | None = None,
+    needs_attacker: bool | None = None,
 ) -> VerifyResult:
     result = VerifyResult(label=f"machine seed={plan.seed}")
 
@@ -510,7 +515,8 @@ def verify_machine(
         )
         return result
 
-    needs_attacker = any(_attacker_for(s.recipe) for s in plan.steps)
+    if needs_attacker is None:
+        needs_attacker = any(_attacker_for(s.recipe) for s in plan.steps)
     setup, err = _setup(
         backend, f"seed-{plan.seed}", image, needs_attacker, keep, apt_snapshot=apt_snapshot
     )
@@ -520,6 +526,8 @@ def verify_machine(
         return result
     result.container = setup.target
     result.attacker = setup.attacker
+    result.network = setup.network
+    result.host = setup.host
     result.kept = keep
 
     contexts = []

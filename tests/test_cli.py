@@ -133,3 +133,13 @@ def test_new_refuses_an_installed_id(tmp_path, monkeypatch, capsys):
     )
     assert cli.cmd_new(args) == 2
     assert "installed registry" in capsys.readouterr().err
+
+
+def test_build_is_qemu_only(capsys):
+    assert main(["build", "--backend", "docker"]) == 2
+    assert "requires --backend qemu" in capsys.readouterr().err
+
+
+def test_destroy_unknown_build(capsys):
+    assert main(["destroy", "no-such-build"]) == 2
+    assert "no build named" in capsys.readouterr().err

@@ -116,3 +116,14 @@ def test_empty_actor_is_rejected(tmp_path):
             "poc:\n  context: target\n  container: ./poc.sh",
             extra='actor: ""',
         )
+
+
+def test_user_shell_contract_for_recipe_packs():
+    from boxes.registry import load_registry
+
+    root = Path(__file__).resolve().parents[1] / "recipes"
+    for recipe in load_registry(root):
+        if "user" in recipe.yields:
+            assert any(f.pred == "user_shell" for f in recipe.provides), recipe.id
+        if recipe.kind == "privesc":
+            assert any(f.pred == "user_shell" for f in recipe.requires), recipe.id

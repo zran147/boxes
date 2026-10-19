@@ -9,3 +9,5 @@ dist/
 .boxes-vm/
 .boxes-registry/
 attestations/
+
+.boxes-builds/

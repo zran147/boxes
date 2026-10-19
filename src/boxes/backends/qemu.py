@@ -367,6 +367,14 @@ class QemuBackend:
         h = int(hashlib.sha1(name.encode()).hexdigest()[:6], 16)
         return f"10.67.0.{10 + h % 200}"
 
+    def connection_info(self, name: str) -> dict:
+        state = self._load(name)
+        return {
+            "ssh_host": "127.0.0.1",
+            "ssh_port": state["port"],
+            "vm_ip": state.get("provision_ip"),
+        }
+
     def seal(self, name: str) -> ExecResult:
         """Disconnect the provision NIC before PoCs (host-only phase)."""
         st = self._load(name)
