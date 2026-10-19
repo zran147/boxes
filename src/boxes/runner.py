@@ -73,6 +73,12 @@ def _env_key(name: str) -> str:
     return "BOX_" + re.sub(r"[^A-Za-z0-9]", "_", name).upper()
 
 
+def _env_value(value) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
 def build_env(
     recipe: Recipe,
     ctx: dict,
@@ -80,7 +86,7 @@ def build_env(
     host: str = "127.0.0.1",
     proxy_url: str | None = None,
 ) -> dict[str, str]:
-    env = {_env_key(key): str(value) for key, value in ctx.items()}
+    env = {_env_key(key): _env_value(value) for key, value in ctx.items()}
     # reserved keys always win over a recipe param with the same name
     env["BOX_RECIPE"] = recipe.id
     env["BOX_OS"] = os_name

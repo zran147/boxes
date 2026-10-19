@@ -3,7 +3,7 @@ version: 1.0.0
 kind: creds
 description: Enumerate the accessible FTP share and find leaked SSH credentials.
 os: ["ubuntu-*", "debian-*"]
-difficulty: 0.2
+difficulty: medium
 provision: ./provision.sh
 poc:
   context: attacker
@@ -16,8 +16,7 @@ provides:
   - creds.pass($ssh_pass)
 params:
   ssh_user:
-    type: choice
-    values: ["deploy", "backup", "svc_web"]
+    type: username
   ssh_pass:
     type: password
     length: 14

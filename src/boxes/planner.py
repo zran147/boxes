@@ -20,6 +20,7 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass, field
 
+from . import difficulty as difficulty_mod
 from .facts import Fact, rename_fact, subst_fact, unify_fact
 from .recipe import Recipe
 from .seed import derive_seed
@@ -184,6 +185,9 @@ def generate(
     to_root: int,
     seed: int,
     prefix: list[Step] | None = None,
+    machine_difficulty: str | None = None,
+    user_difficulty: str | None = None,
+    root_difficulty: str | None = None,
 ) -> Plan | None:
     if to_user < 1 or to_root < 1:
         raise ValueError("to_user and to_root must both be >= 1")
@@ -217,7 +221,12 @@ def generate(
         if root_steps is None:
             continue
         plan = Plan(os_name=os_name, steps=[*steps, *root_steps], seed=seed)
-        if is_relevant(plan):
+        if is_relevant(plan) and difficulty_mod.matches(
+            plan,
+            machine=machine_difficulty,
+            user=user_difficulty,
+            root=root_difficulty,
+        ):
             return plan
     return None
 
@@ -230,6 +239,9 @@ def generate_paths(
     seed: int,
     count: int,
     share_prefix: bool = True,
+    machine_difficulty: str | None = None,
+    user_difficulty: str | None = None,
+    root_difficulty: str | None = None,
 ) -> list[Plan]:
     """Generate up to ``count`` distinct paths.
 
@@ -252,7 +264,15 @@ def generate_paths(
             else:
                 path_seed = derive_seed(seed, "path", str(index), str(attempt))
             plan = generate(
-                recipes, os_name, to_user, to_root, path_seed, prefix=prefix
+                recipes,
+                os_name,
+                to_user,
+                to_root,
+                path_seed,
+                prefix=prefix,
+                machine_difficulty=machine_difficulty,
+                user_difficulty=user_difficulty,
+                root_difficulty=root_difficulty,
             )
             if plan is None:
                 continue
@@ -268,7 +288,16 @@ def generate_paths(
             # no distinct branch with the shared prefix; fall back to independent
             for attempt in range(50):
                 path_seed = derive_seed(seed, "path", str(index), "solo", str(attempt))
-                plan = generate(recipes, os_name, to_user, to_root, path_seed)
+                plan = generate(
+                    recipes,
+                    os_name,
+                    to_user,
+                    to_root,
+                    path_seed,
+                    machine_difficulty=machine_difficulty,
+                    user_difficulty=user_difficulty,
+                    root_difficulty=root_difficulty,
+                )
                 if plan is None:
                     continue
                 key = tuple(step.recipe.id for step in plan.steps)

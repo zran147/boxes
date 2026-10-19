@@ -3,7 +3,7 @@ version: 1.0.0
 kind: creds
 description: A discovered admin endpoint leaks credentials for another service.
 os: ["ubuntu-*", "debian-*"]
-difficulty: 0.3
+difficulty: medium
 provision: ./provision.sh
 poc:
   context: attacker
@@ -17,8 +17,7 @@ provides:
   - creds.pass($admin_pass)
 params:
   admin_user:
-    type: choice
-    values: ["admin", "webadmin"]
+    type: username
   admin_pass:
     type: password
     length: 12

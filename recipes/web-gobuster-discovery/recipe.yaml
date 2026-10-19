@@ -3,7 +3,7 @@ version: 1.0.0
 kind: discovery
 description: Directory brute force against the web server discovers a hidden endpoint.
 os: ["ubuntu-*", "debian-*"]
-difficulty: 0.2
+difficulty: easy
 provision: ./provision.sh
 poc:
   context: attacker
@@ -16,6 +16,7 @@ params:
   path:
     type: choice
     values: ["admin", "backup", "dev"]
+    weights: [3, 1, 1]
 walkthrough: |
   Directory brute forcing on port 80 turns up `/{path}/`, which was not linked
   anywhere on the site. (Discovery only — this tells us the endpoint exists.)

@@ -3,7 +3,7 @@ version: 1.0.0
 kind: service-access
 description: Log into FTP using a common/default credential pair.
 os: ["ubuntu-*", "debian-*"]
-difficulty: 0.1
+difficulty: easy
 provision: ./provision.sh
 poc:
   context: attacker

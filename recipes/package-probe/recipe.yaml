@@ -3,7 +3,7 @@ version: 1.0.0
 kind: discovery
 description: "Provisioning smoke test: install a package through the proxy."
 os: ["ubuntu-*"]
-difficulty: 0.1
+difficulty: easy
 provision: ./provision.sh
 poc:
   context: target

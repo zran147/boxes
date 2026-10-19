@@ -113,8 +113,6 @@ def check_recipe(recipe: Recipe, seed: int = 0) -> Result:
 
     if not _ID.match(recipe.id):
         result.errors.append(f"recipe id must match {_ID.pattern!r}")
-    if not (0.0 <= recipe.difficulty <= 1.0):
-        result.errors.append("difficulty must be within [0, 1]")
     if not recipe.provides:
         result.errors.append("recipe must declare at least one provides fact")
     os_name = next((o for o in SAMPLE_OSES if recipe.applies_to(o)), None)
@@ -126,7 +124,11 @@ def check_recipe(recipe: Recipe, seed: int = 0) -> Result:
 
     result.errors.extend(lint([recipe]))
 
-    params = {name: generate_param(spec, rng) for name, spec in recipe.params.items()}
+    used_users: set[str] = set()
+    params = {
+        name: generate_param(spec, rng, used_users)
+        for name, spec in recipe.params.items()
+    }
 
     # A complete concrete context for this recipe in isolation. Variables that
     # would normally come from a sibling recipe are grounded to fixture_<name>,

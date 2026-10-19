@@ -8,11 +8,13 @@ from pathlib import Path
 
 import yaml
 
+from .difficulty import normalize as normalize_difficulty
 from .facts import Fact, parse_fact, validate_fact, vars_in
+from .names import STYLES as USERNAME_STYLES
 
 KINDS = {"discovery", "service-access", "creds", "foothold", "privesc"}
 GOALS = {"user", "root"}
-PARAM_TYPES = {"choice", "password", "token"}
+PARAM_TYPES = {"choice", "password", "token", "int", "bool", "username"}
 
 _SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
 
@@ -23,6 +25,11 @@ class ParamSpec:
     type: str
     values: list | None = None
     length: int = 16
+    min: int | None = None
+    max: int | None = None
+    step: int = 1
+    weights: list[float] | None = None
+    styles: list[str] | None = None
 
 
 @dataclass
@@ -31,7 +38,7 @@ class Recipe:
     version: str
     kind: str
     os: list[str]
-    difficulty: float
+    difficulty: str
     requires: list[Fact]
     provides: list[Fact]
     yields: list[str]
@@ -49,6 +56,9 @@ class Recipe:
     poc_timeout: int = 120
     assets: str | None = None  # directory copied to /opt/boxes/<id>/ in the target
     path: Path | None = None
+
+    def __post_init__(self) -> None:
+        self.difficulty = normalize_difficulty(self.difficulty)
 
     def applies_to(self, os_name: str) -> bool:
         from fnmatch import fnmatch
@@ -134,13 +144,57 @@ def load_recipe(path: Path) -> Recipe:
         if ptype not in PARAM_TYPES:
             raise ValueError(f"{rid}: param {name!r} type must be one of {sorted(PARAM_TYPES)}")
         values = spec.get("values")
-        if ptype == "choice" and (not values or not isinstance(values, list)):
-            raise ValueError(f"{rid}: choice param {name!r} needs a non-empty values list")
+        weights = spec.get("weights")
+        styles = spec.get("styles")
+        pmin = spec.get("min")
+        pmax = spec.get("max")
+        pstep = spec.get("step", 1)
+        length = int(spec.get("length", 16))
+
+        if ptype == "choice":
+            if not values or not isinstance(values, list):
+                raise ValueError(f"{rid}: choice param {name!r} needs a non-empty values list")
+            if any(isinstance(v, (dict, list)) for v in values):
+                raise ValueError(f"{rid}: choice param {name!r} values must be scalars")
+            if weights is not None:
+                if not isinstance(weights, list) or len(weights) != len(values):
+                    raise ValueError(
+                        f"{rid}: choice param {name!r} weights must match values"
+                    )
+                if any(float(w) <= 0 for w in weights):
+                    raise ValueError(f"{rid}: choice param {name!r} weights must be positive")
+        elif ptype == "int":
+            if not isinstance(pmin, int) or not isinstance(pmax, int):
+                raise ValueError(f"{rid}: int param {name!r} needs integer min and max")
+            if pmin > pmax:
+                raise ValueError(f"{rid}: int param {name!r} min must be <= max")
+            if not isinstance(pstep, int) or pstep <= 0:
+                raise ValueError(f"{rid}: int param {name!r} step must be a positive integer")
+        elif ptype == "username":
+            if styles is not None:
+                if not isinstance(styles, list) or not styles:
+                    raise ValueError(f"{rid}: username param {name!r} styles must be a non-empty list")
+                for style in styles:
+                    if style not in USERNAME_STYLES:
+                        raise ValueError(
+                            f"{rid}: username param {name!r} has unknown style {style!r}"
+                        )
+        elif ptype in {"password", "token"}:
+            if length <= 0:
+                raise ValueError(f"{rid}: {ptype} param {name!r} length must be positive")
+        else:  # bool
+            pass
+
         params[name] = ParamSpec(
             name=name,
             type=ptype,
-            values=values,
-            length=int(spec.get("length", 16)),
+            values=values if ptype == "choice" else None,
+            length=length,
+            min=pmin if ptype == "int" else None,
+            max=pmax if ptype == "int" else None,
+            step=pstep if ptype == "int" else 1,
+            weights=[float(w) for w in weights] if ptype == "choice" and weights else None,
+            styles=styles if ptype == "username" else None,
         )
 
     base_dir = path.parent
@@ -190,7 +244,7 @@ def load_recipe(path: Path) -> Recipe:
         version=version,
         kind=kind,
         os=[str(p) for p in os_list],
-        difficulty=float(data.get("difficulty", 0.5)),
+        difficulty=data.get("difficulty", "medium"),
         requires=requires,
         provides=provides,
         yields=list(yields),

@@ -12,6 +12,7 @@ from pathlib import Path
 import yaml
 
 from . import accel as accel_mod
+from . import difficulty as difficulty_mod
 from .backends import get_backend
 from .cache import Cache, machine_key
 from .harness import check_recipe
@@ -39,6 +40,18 @@ DEFAULT_RECIPES = Path("recipes")
 CACHE_FILE = PROJECT_ROOT / ".boxes-cache" / "verifications.json"
 
 
+def _difficulty_note(args) -> str:
+    parts = []
+    for label, value in (
+        ("machine", getattr(args, "difficulty", None)),
+        ("user", getattr(args, "user_difficulty", None)),
+        ("root", getattr(args, "root_difficulty", None)),
+    ):
+        if value:
+            parts.append(f"{label} {value}")
+    return f" (difficulty: {', '.join(parts)})" if parts else ""
+
+
 def cmd_gen(args) -> int:
     recipes = load_registry(args.recipes)
     errs = lint(recipes)
@@ -61,10 +74,22 @@ def cmd_gen(args) -> int:
             print("--multi-path needs at least 2 paths", file=sys.stderr)
             return 2
         paths = generate_paths(
-            pool, args.os, args.to_user, args.to_root, seed, args.multi_path
+            pool,
+            args.os,
+            args.to_user,
+            args.to_root,
+            seed,
+            args.multi_path,
+            machine_difficulty=args.difficulty,
+            user_difficulty=args.user_difficulty,
+            root_difficulty=args.root_difficulty,
         )
         if not paths:
-            print("could not generate any paths for those depths", file=sys.stderr)
+            print(
+                "could not generate any paths for those depths"
+                + _difficulty_note(args),
+                file=sys.stderr,
+            )
             return 1
         if len(paths) < args.multi_path:
             print(
@@ -82,11 +107,20 @@ def cmd_gen(args) -> int:
             print(render_machine_markdown(paths, manifests))
         return 0
 
-    plan = generate(pool, args.os, args.to_user, args.to_root, seed)
+    plan = generate(
+        pool,
+        args.os,
+        args.to_user,
+        args.to_root,
+        seed,
+        machine_difficulty=args.difficulty,
+        user_difficulty=args.user_difficulty,
+        root_difficulty=args.root_difficulty,
+    )
     if plan is None:
         print(
             f"could not build a machine with {args.to_user} step(s) to user and "
-            f"{args.to_root} step(s) to root",
+            f"{args.to_root} step(s) to root" + _difficulty_note(args),
             file=sys.stderr,
         )
         return 1
@@ -301,6 +335,9 @@ def cmd_verify(args) -> int:
         if args.multi_path < 2:
             print("--multi-path needs at least 2 paths", file=sys.stderr)
             return 2
+    if any((args.difficulty, args.user_difficulty, args.root_difficulty)) and not args.machine:
+        print("difficulty filters only apply to --machine", file=sys.stderr)
+        return 2
     if args.backend == "qemu" and args.os != SUPPORTED_OS:
         print(
             f"the VM base currently supports only {SUPPORTED_OS}, not {args.os}",
@@ -335,10 +372,22 @@ def cmd_verify(args) -> int:
 
         if args.multi_path is not None:
             paths = generate_paths(
-                pool, args.os, args.to_user, args.to_root, args.seed, args.multi_path
+                pool,
+                args.os,
+                args.to_user,
+                args.to_root,
+                args.seed,
+                args.multi_path,
+                machine_difficulty=args.difficulty,
+                user_difficulty=args.user_difficulty,
+                root_difficulty=args.root_difficulty,
             )
             if not paths:
-                print("could not generate any paths for those depths", file=sys.stderr)
+                print(
+                "could not generate any paths for those depths"
+                + _difficulty_note(args),
+                file=sys.stderr,
+            )
                 return 1
             if len(paths) < args.multi_path:
                 print(
@@ -352,7 +401,12 @@ def cmd_verify(args) -> int:
                 if not satisfies(path):
                     print(f"internal error: path {index} does not satisfy itself", file=sys.stderr)
                     return 3
-                print(f"path {index} (seed {path.seed}): " + " -> ".join(s.recipe.id for s in path.steps))
+                summary = difficulty_mod.report(path)
+                print(
+                    f"path {index} (seed {path.seed}): "
+                    + " -> ".join(s.recipe.id for s in path.steps)
+                    + f"  [difficulty {summary['machine']}; user {summary['user']}; root {summary['root']}]"
+                )
                 key = machine_key(path, manifest, image_id, backend.fidelity)
                 entries.append((path, manifest, key, cache.get(key) is not None))
 
@@ -377,9 +431,22 @@ def cmd_verify(args) -> int:
                     print(f"path {index} already verified (cache hit)")
             return 0 if ok else 1
 
-        plan = generate(pool, args.os, args.to_user, args.to_root, args.seed)
+        plan = generate(
+            pool,
+            args.os,
+            args.to_user,
+            args.to_root,
+            args.seed,
+            machine_difficulty=args.difficulty,
+            user_difficulty=args.user_difficulty,
+            root_difficulty=args.root_difficulty,
+        )
         if plan is None:
-            print("could not generate a machine for those depths", file=sys.stderr)
+            print(
+                "could not generate a machine for those depths"
+                + _difficulty_note(args),
+                file=sys.stderr,
+            )
             return 1
         if not satisfies(plan):
             print("internal error: generated plan does not satisfy itself", file=sys.stderr)
@@ -387,6 +454,11 @@ def cmd_verify(args) -> int:
         manifest = materialize(plan, build_seed)
         print(f"plan seed={args.seed} build seed={build_seed}")
         print("chain: " + " -> ".join(s.recipe.id for s in plan.steps))
+        summary = difficulty_mod.report(plan)
+        print(
+            f"difficulty: {summary['machine']} (user {summary['user']}, "
+            f"root {summary['root']})"
+        )
 
         key = machine_key(plan, manifest, image_id, backend.fidelity)
         if cache.get(key) is not None:
@@ -506,6 +578,12 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--os", default="ubuntu-22.04")
     g.add_argument("--to-user", type=int, default=3, dest="to_user")
     g.add_argument("--to-root", type=int, default=2, dest="to_root")
+    g.add_argument("--difficulty", choices=["easy", "medium", "hard"], default=None,
+                   help="required machine difficulty (the hardest recipe)")
+    g.add_argument("--user-difficulty", choices=["easy", "medium", "hard"], default=None,
+                   dest="user_difficulty")
+    g.add_argument("--root-difficulty", choices=["easy", "medium", "hard"], default=None,
+                   dest="root_difficulty")
     g.add_argument("--seed", type=int, default=None, help="plan/chain seed")
     g.add_argument("--build-seed", type=int, default=None, dest="build_seed",
                    help="param materialisation seed (defaults to random)")
@@ -533,7 +611,7 @@ def build_parser() -> argparse.ArgumentParser:
     n.add_argument("--kind", required=True,
                    choices=["discovery", "service-access", "creds", "foothold", "privesc"])
     n.add_argument("--os", action="append", help="OS pattern (repeatable), default ubuntu-*")
-    n.add_argument("--difficulty", type=float, default=0.3)
+    n.add_argument("--difficulty", choices=["easy", "medium", "hard"], default="medium")
     n.add_argument("--seed", type=int, default=0)
     n.set_defaults(func=cmd_new)
 
@@ -559,6 +637,12 @@ def build_parser() -> argparse.ArgumentParser:
                    help="EXPERIMENTAL: verify N independent paths (default 2)")
     v.add_argument("--to-user", type=int, default=1, dest="to_user")
     v.add_argument("--to-root", type=int, default=1, dest="to_root")
+    v.add_argument("--difficulty", choices=["easy", "medium", "hard"], default=None,
+                   help="required machine difficulty (the hardest recipe)")
+    v.add_argument("--user-difficulty", choices=["easy", "medium", "hard"], default=None,
+                   dest="user_difficulty")
+    v.add_argument("--root-difficulty", choices=["easy", "medium", "hard"], default=None,
+                   dest="root_difficulty")
     v.add_argument("--os", default="ubuntu-22.04")
     v.add_argument("--backend", default="docker", choices=["docker", "qemu"])
     v.add_argument("--accel", choices=["auto", "kvm", "tcg"], default=None,

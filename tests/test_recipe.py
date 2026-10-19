@@ -75,3 +75,8 @@ def test_fidelity_is_rejected(tmp_path):
 def test_invalid_poc_context_is_rejected(tmp_path):
     with pytest.raises(ValueError):
         _write(tmp_path, "poc:\n  container: ./poc.sh\n  context: moon")
+
+
+def test_numeric_difficulty_maps_to_a_band(tmp_path):
+    r = _write(tmp_path, "poc:\n  context: attacker\n  container: ./poc.sh")
+    assert r.difficulty == "easy"

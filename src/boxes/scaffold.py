@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from .difficulty import normalize as normalize_difficulty
+
 _ID = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 _TEMPLATES: dict[str, str] = {
@@ -61,8 +63,7 @@ provides:
   - creds.pass($pass)
 params:
   user:
-    type: choice
-    values: ["deploy", "backup"]
+    type: username
   pass:
     type: password
     length: 14
@@ -117,12 +118,13 @@ def create_recipe(
     rid: str,
     kind: str,
     os_patterns: list[str] | None = None,
-    difficulty: float = 0.3,
+    difficulty: str = "medium",
 ) -> Path:
     if not _ID.match(rid):
         raise ValueError(f"recipe id must match {_ID.pattern!r}, got {rid!r}")
     if kind not in _TEMPLATES:
         raise ValueError(f"kind must be one of {sorted(_TEMPLATES)}, got {kind!r}")
+    difficulty = normalize_difficulty(difficulty)
 
     root = Path(root)
     target = root / rid

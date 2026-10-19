@@ -13,6 +13,7 @@ import random
 from dataclasses import dataclass
 
 from .facts import Fact, Var
+from .names import generate_username
 from .planner import Plan, Step
 from .recipe import ParamSpec
 from .seed import derive_seed
@@ -85,9 +86,20 @@ def _spec_for(plan: Plan, varname: str) -> ParamSpec | None:
     return None
 
 
-def generate_param(spec: ParamSpec, rng: random.Random):
+def generate_param(
+    spec: ParamSpec, rng: random.Random, used_users: set[str] | None = None
+):
     if spec.type == "choice":
-        return rng.choice(list(spec.values or []))
+        values = list(spec.values or [])
+        if spec.weights:
+            return rng.choices(values, weights=spec.weights, k=1)[0]
+        return rng.choice(values)
+    if spec.type == "int":
+        return rng.randrange(spec.min, spec.max + 1, spec.step)
+    if spec.type == "bool":
+        return rng.choice([True, False])
+    if spec.type == "username":
+        return generate_username(rng, spec.styles, used_users)
     if spec.type == "password":
         return "".join(rng.choice(_PW_CHARS) for _ in range(spec.length))
     if spec.type == "token":
@@ -117,6 +129,7 @@ def materialize(plan: Plan, build_seed: int) -> Manifest:
                 fixed_by_var[k] = v
 
     values: dict[str, object] = {}
+    used_users: set[str] = set()
     for varname in uf.all():
         root = uf.find(varname)
         if root in values:
@@ -131,7 +144,11 @@ def materialize(plan: Plan, build_seed: int) -> Manifest:
             values[root] = None
             continue
         spec = _spec_for(plan, spec_member)
-        values[root] = generate_param(spec, random.Random(derive_seed(build_seed, spec_member)))
+        values[root] = generate_param(
+            spec,
+            random.Random(derive_seed(build_seed, spec_member)),
+            used_users,
+        )
 
     return Manifest(values=values, uf=uf, build_seed=build_seed)
 

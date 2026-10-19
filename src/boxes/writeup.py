@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 
+from . import difficulty as difficulty_mod
 from .manifest import Manifest
 from .planner import Plan
 
@@ -48,11 +49,21 @@ def render_markdown(plan: Plan, manifest: Manifest) -> str:
     lines: list[str] = []
     lines.append(f"# Generated machine — {plan.os_name}")
     lines.append("")
+    summary = difficulty_mod.report(plan)
     lines.append(f"- plan seed: `{plan.seed}`")
     lines.append(f"- build seed: `{manifest.build_seed}`")
+    lines.append(
+        f"- difficulty: **{summary['machine']}** "
+        f"(user {summary['user']}, root {summary['root']})"
+    )
+    lines.append(
+        f"- length: user {summary['length']['user']} / root {summary['length']['root']}"
+    )
     lines.append(f"- services: {', '.join(str(p) for p in plan.ports)}")
-    lines.append(f"- steps to user flag: {plan.user_index + 1}")
-    lines.append(f"- steps to root flag: {plan.root_index - plan.user_index}")
+    lines.append(
+        f"- shape: discoveries {summary['discoveries']} · "
+        f"context switches {summary['context_switches']}"
+    )
     lines.append("")
     lines.extend(_steps_markdown(plan, manifest))
     return "\n".join(lines).rstrip() + "\n"
@@ -75,17 +86,30 @@ def render_machine_markdown(paths: list[Plan], manifests: list[Manifest]) -> str
     lines.append("")
     lines.append(f"- base plan seed: `{first.seed}`")
     lines.append(f"- build seed: `{manifests[0].build_seed}`")
-    lines.append(f"- paths: {len(paths)} (experimental)")
+    lines.append(f"- paths: {len(paths)}")
     if prefix:
-        lines.append(f"- shared prefix: {prefix} step(s)")
+        shared = difficulty_mod.report(first)
+        lines.append(
+            f"- shared prefix: {prefix} step(s) · user difficulty **{shared['user']}**"
+        )
     lines.append("")
     if prefix:
         lines.append(f"## Shared prefix ({prefix} step(s))")
         lines.append("")
         lines.extend(_steps_markdown(first, manifests[0], 0, prefix))
     for index, (plan, manifest) in enumerate(zip(paths, manifests), 1):
+        summary = difficulty_mod.report(plan)
         lines.append(f"## Path {index}" + (" branch" if prefix else ""))
-        lines.append(f"plan seed `{plan.seed}` · services {', '.join(str(p) for p in plan.ports)}")
+        lines.append(
+            f"plan seed `{plan.seed}` · difficulty **{summary['machine']}** "
+            f"(user {summary['user']}, root {summary['root']}) · "
+            f"services {', '.join(str(p) for p in plan.ports)}"
+        )
+        lines.append(
+            f"length: user {summary['length']['user']} / root {summary['length']['root']} · "
+            f"discoveries {summary['discoveries']} · "
+            f"context switches {summary['context_switches']}"
+        )
         lines.append("")
         lines.extend(_steps_markdown(plan, manifest, prefix))
     return "\n".join(lines).rstrip() + "\n"
@@ -117,6 +141,7 @@ def plan_to_dict(plan: Plan, manifest: Manifest) -> dict:
         "services": plan.ports,
         "steps_to_user": plan.user_index + 1,
         "steps_to_root": plan.root_index - plan.user_index,
+        "difficulty": difficulty_mod.report(plan),
         "steps": steps,
         "manifest": {k: v for k, v in manifest.values.items()},
     }

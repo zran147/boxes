@@ -209,3 +209,35 @@ def test_unused_discovery_is_not_a_planner_candidate(pool):
         plan = generate(pool, OS, 3, 2, seed)
         assert plan is not None
         assert all(s.recipe.id != "vm-kernel-probe" for s in plan.steps)
+
+
+def test_difficulty_is_the_hardest_recipe(pool):
+    from boxes.difficulty import report
+
+    easy = generate(pool, OS, 2, 1, 0, machine_difficulty="easy")
+    assert easy is not None
+    assert report(easy)["machine"] == "easy"
+
+    medium = generate(pool, OS, 2, 1, 0, machine_difficulty="medium")
+    assert medium is not None
+    assert report(medium)["machine"] == "medium"
+
+    hard = generate(pool, OS, 1, 1, 0, machine_difficulty="hard")
+    assert hard is not None
+    hard_summary = report(hard)
+    assert hard_summary["machine"] == "hard"
+    assert hard_summary["user"] == "hard"
+
+
+def test_user_and_root_difficulty_are_separate(pool):
+    from boxes.difficulty import report
+
+    user_hard = generate(pool, OS, 1, 1, 0, user_difficulty="hard")
+    assert user_hard is not None
+    assert report(user_hard)["user"] == "hard"
+
+    root_hard = generate(pool, OS, 2, 2, 0, root_difficulty="hard")
+    assert root_hard is not None
+    assert report(root_hard)["user"] == "easy"
+    assert report(root_hard)["root"] == "hard"
+    assert report(root_hard)["machine"] == "hard"

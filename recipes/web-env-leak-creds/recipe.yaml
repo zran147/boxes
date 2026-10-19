@@ -3,7 +3,7 @@ version: 1.0.0
 kind: creds
 description: An exposed .env file on the web server leaks service credentials.
 os: ["ubuntu-*", "debian-*"]
-difficulty: 0.2
+difficulty: easy
 provision: ./provision.sh
 poc:
   context: attacker
@@ -16,8 +16,7 @@ provides:
   - creds.pass($leak_pass)
 params:
   leak_user:
-    type: choice
-    values: ["ubuntu", "webmaster", "sysadmin"]
+    type: username
   leak_pass:
     type: password
     length: 13

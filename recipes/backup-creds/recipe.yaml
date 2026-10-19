@@ -3,7 +3,7 @@ version: 1.0.0
 kind: creds
 description: "A backup service leaks SSH credentials."
 os: ["ubuntu-*"]
-difficulty: 0.2
+difficulty: easy
 provision: ./provision.sh
 poc:
   context: attacker
@@ -14,8 +14,8 @@ provides:
   - creds($backup_user, $backup_pass)
 params:
   backup_user:
-    type: choice
-    values: ["backup", "svc_backup"]
+    type: username
+    styles: ["svc_role", "role"]
   backup_pass:
     type: password
     length: 13

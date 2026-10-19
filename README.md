@@ -15,10 +15,9 @@ It works in three layers:
 3. **Check** — a plan is only emitted if every precondition was met earlier, and
    a recipe is only considered proven if its PoC exits 0.
 
-Status: **P0–P2 done.** QEMU (KVM when usable, TCG fallback), pre-baked VM
-bases, snapshots, the shared-prefix DAG, the provisioning proxy, and apt
-snapshot pinning are all verified. P3 (coherence/scale) and P4 (registry) are
-next.
+Status: **P0–P2 done.** P3 is in progress: difficulty bands and typed
+parameters/usernames are implemented. Themes are deferred until the recipe
+catalogue is larger (>50 recipes); the attacker toolkit, more distros, and CI/scale are next.
 
 ## Quick start
 
@@ -143,6 +142,30 @@ are numbered by position (`ftp-config-leak-creds#1.ssh_user`), so multiple
 credential sets in one plan never collide. Params can be `choice`, `password`,
 or `token` (randomised identifiers/filenames).
 
+### Difficulty
+
+Recipes carry a band: `easy`, `medium`, or `hard` (legacy 0..1 values are
+mapped). A machine's difficulty is the **hardest recipe**, not a sum or mean.
+The user phase and root phase are reported separately, and both are shown in
+the walkthrough/JSON:
+
+```bash
+boxes gen --difficulty medium --to-user 2 --to-root 1 --seed 42
+boxes gen --user-difficulty easy --root-difficulty hard --to-user 2 --to-root 2 --seed 42
+boxes verify --machine --difficulty hard --to-user 1 --to-root 1 --seed 42
+```
+
+- `--difficulty` constrains the machine (max of user and root).
+- `--user-difficulty` constrains the user phase.
+- `--root-difficulty` constrains the root phase.
+- Filters are exact band matches and only apply to `gen` / `verify --machine`.
+
+Length and **shape** (steps, exposed services, discoveries, attacker↔target
+context switches) are reported separately, so a long easy machine does not
+become hard just because it is tedious. Some depth/band combinations are
+infeasible with the current catalogue; the CLI reports the requested bands
+instead of silently dropping them.
+
 ### Multi-path
 
 ```bash
@@ -158,7 +181,7 @@ is verified on its own fast container. It is only valid with `gen` and
 
 ## Recipe tooling
 
-`boxes new <id> --kind <kind>` scaffolds a `recipe.yaml` that already passes lint
+`boxes new <id> --kind <kind> --difficulty easy|medium|hard` scaffolds a `recipe.yaml` that already passes lint
 and the harness. `boxes test-recipe <id>` tests a recipe in isolation, with no
 machine:
 
@@ -178,7 +201,7 @@ id: my-recipe
 version: 1.0.0
 kind: privesc            # discovery | service-access | creds | foothold | privesc
 os: ["ubuntu-*"]
-difficulty: 0.3
+difficulty: medium       # easy | medium | hard
 yields: ["root"]         # omit unless this step reaches a flag
 requires:
   - access_shell($u)
@@ -192,9 +215,44 @@ walkthrough: |
   ... uses `{binary}` and `{u}` ...
 ```
 
+### Parameter types
+
+`params` are typed generators/validators, not just string choices:
+
+- `choice` — fixed values, optionally weighted; values may be strings, ints, or bools.
+- `int` — `min`, `max`, `step`.
+- `bool` — random true/false.
+- `username` — a human-looking account from small first/last/role wordlists.
+- `password` / `token` — random strings with a configurable length.
+
+```yaml
+params:
+  user:
+    type: username
+    styles: ["first_last", "flast"]   # default: first/last/flast/firstl/first_last
+  port:
+    type: int
+    min: 8000
+    max: 8090
+    step: 10
+  tls:
+    type: bool
+  binary:
+    type: choice
+    values: ["/usr/bin/find", "/usr/bin/python3"]
+    weights: [3, 1]
+```
+
+Values are deterministic from the build seed. The manifest keeps their types;
+provisioning/PoC env vars stringify them (`true` / `false` for bools, decimal
+strings for ints). `username` is one generator type, not the whole typed system:
+it draws from the wordlists in `src/boxes/names.py`, supports `first`, `last`,
+`flast`, `firstl`, `first_last`, `role`, and `svc_role` styles, avoids system
+accounts, and keeps generated names unique within a machine.
+
 `boxes lint` catches unknown predicates, wrong arity, unbound variables in
 `provides`, a flag yielded by the wrong kind, a bad `poc.context`, a non-concrete
-`open_port`, and flags reachable with no real work.
+`open_port`, malformed param specs, and flags reachable with no real work.
 
 ## Verification
 
@@ -295,7 +353,7 @@ boxes verify --all --clear-cache  # wipe first
 
 `--jobs` parallelizes independent recipes. Chain verification is sequential
 because every step depends on the previous ones. Container timings on this host:
-13 recipes cold with 4 jobs ≈ 30 s (the package probe installs via the
+13 recipes cold with 4 jobs ≈ 15–30 s (the package probe installs via the
 proxy); warm cache ≈ 0.5 s.
 
 ## VM backend
@@ -471,5 +529,5 @@ The sudoers rule must allow the helper subcommands, hence `boxes net *`.
 | **P0** — symbolic generation | Facts + unification, typed predicates, recipes, bounded-length planner, `open_port` prelude, causal connectivity, two-seed manifest, lint, scaffold, per-recipe harness | **Done** |
 | **P1** — container fast path | Pluggable backend, target + attacker images, internal network, shared attacker container, provision/poc contract, assets, L2 + L3 verification, content-addressed cache, parallel jobs, real recipes | **Done** |
 | **P2** — fidelity + branching | QEMU (KVM auto/TCG fallback) + prebaked base + snapshots; one PoC per recipe (`poc.container` XOR `poc.vm`); pre-PoC snapshot/restore; shared-prefix DAG with one-VM verification and attacker reset; hybrid provisioning proxy (durable apt cache + squid + artifact store) with egress-only phase and seal; apt snapshot pinning; VM base checksum/resume/store overrides; proxy health/cleanup | **Done** |
-| **P3** — coherence + scale | Difficulty budgets, themes, typed choices, more distros, a complete attacker toolkit | Planned |
+| **P3** — coherence + scale | In progress: difficulty bands (machine = hardest recipe; separate user/root; length/shape), typed params and human-looking usernames, weighted choices. Next: complete attacker toolkit, Debian 12/Ubuntu 24.04, planner scale/CI/docs. Themes deferred until the catalogue is large enough (>50 recipes). | **In progress** |
 | **P4** — registry | Recipe registry API + client, signed recipes, sandboxed execution, per-recipe CI | Planned |

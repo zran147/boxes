@@ -3,7 +3,7 @@ version: 1.0.0
 kind: discovery
 description: "VM-only probe: confirm the product really booted a VM kernel."
 os: ["ubuntu-*"]
-difficulty: 0.1
+difficulty: easy
 provision: ./provision.sh
 poc:
   context: target

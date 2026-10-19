@@ -35,4 +35,4 @@ def test_scaffold_uses_custom_os_and_difficulty(tmp_path):
     path = create_recipe(tmp_path, "custom", "privesc", os_patterns=["debian-*"], difficulty=0.7)
     text = path.read_text()
     assert "debian-*" in text
-    assert "difficulty: 0.7" in text
+    assert "difficulty: hard" in text

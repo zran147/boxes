@@ -31,3 +31,17 @@ def test_qemu_image_rejects_an_unsupported_os(capsys):
     rc = main(["image", "build", "--backend", "qemu", "--os", "ubuntu-24.04"])
     assert rc == 2
     assert "only ubuntu-22.04" in capsys.readouterr().err
+
+
+def test_gen_difficulty_filter(capsys):
+    assert main([
+        "gen", "--difficulty", "hard", "--to-user", "1", "--to-root", "1", "--seed", "0",
+    ]) == 0
+    out = capsys.readouterr().out
+    assert "difficulty: **hard**" in out
+    assert "user hard" in out
+
+
+def test_difficulty_requires_machine_on_verify(capsys):
+    assert main(["verify", "--difficulty", "easy", "--recipe", "x"]) == 2
+    assert "only apply to --machine" in capsys.readouterr().err
