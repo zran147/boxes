@@ -107,7 +107,10 @@ def resolve_actor(recipe: Recipe, ctx: dict) -> str:
         key = actor[1:]
         if key not in ctx:
             raise ValueError(f"{recipe.id}: actor {actor} is not bound in this context")
-        return str(ctx[key])
+        value = str(ctx[key])
+        if not value.strip():
+            raise ValueError(f"{recipe.id}: actor {actor} resolved to an empty user")
+        return value
     return actor
 
 

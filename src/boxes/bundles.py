@@ -126,6 +126,8 @@ def read_bundle(path: Path) -> tuple[dict, dict[str, bytes]]:
     if MANIFEST_NAME not in members:
         raise ValueError("bundle is missing bundle.json")
     manifest = json.loads(members[MANIFEST_NAME])
+    if not isinstance(manifest, dict):
+        raise ValueError("bundle.json must be an object")
     files = {name: data for name, data in members.items() if name != MANIFEST_NAME}
     expected = manifest.get("files")
     if not isinstance(expected, dict):

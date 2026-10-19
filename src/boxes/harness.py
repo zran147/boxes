@@ -135,7 +135,19 @@ def check_recipe(recipe: Recipe, seed: int = 0, os_name: str | None = None) -> R
 
     result.errors.extend(lint([recipe]))
 
-    used_users: set[str] = set()
+    used_users: set[str] = {
+        str(value)
+        for fact in [*recipe.requires, *recipe.provides]
+        for value in fact.args
+        if isinstance(value, str)
+    }
+    used_users.update(
+        str(value)
+        for spec in recipe.params.values()
+        if spec.type == "choice"
+        for value in (spec.values or [])
+        if isinstance(value, str)
+    )
     params = {
         name: generate_param(spec, rng, used_users)
         for name, spec in recipe.params.items()

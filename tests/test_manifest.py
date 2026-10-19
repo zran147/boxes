@@ -56,6 +56,19 @@ def test_generated_username_avoids_a_fixed_username():
     assert manifest.value_of("r#1.u") != "backup"
 
 
+def test_generated_username_avoids_choice_values():
+    recipe = Recipe(
+        id="r", version="1.0.0", kind="discovery", os=["ubuntu-*"], difficulty=1,
+        requires=[], provides=[], yields=[], walkthrough="",
+        params={
+            "u": ParamSpec("u", "username", styles=["role"]),
+            "chosen": ParamSpec("chosen", "choice", values=["backup"]),
+        },
+    )
+    manifest = materialize(Plan(OS, [Step(recipe, "r#0", {}, [], [])], 0), 0)
+    assert manifest.value_of("r#0.u") != "backup"
+
+
 def test_plan_variables_are_numbered_per_step():
     plan = generate(_pool(), OS, 3, 2, 0)
     assert [s.instance for s in plan.steps] == [

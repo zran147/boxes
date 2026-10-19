@@ -264,6 +264,16 @@ def cmd_test_recipe(args) -> int:
 
 
 def cmd_new(args) -> int:
+    installed_dir = registry_client.registry_recipes()
+    if installed_dir.is_dir():
+        installed_ids = {r.id for r in load_registry(installed_dir)}
+        if args.id in installed_ids:
+            print(
+                f"refusing to scaffold {args.id!r}: it collides with an "
+                "installed registry recipe",
+                file=sys.stderr,
+            )
+            return 2
     try:
         path = create_recipe(args.recipes, args.id, args.kind, args.os, args.difficulty)
     except (ValueError, FileExistsError) as e:

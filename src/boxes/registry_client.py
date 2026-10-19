@@ -434,7 +434,7 @@ def install(
     ):
         if file_hashes(installed) == entry["files"]:
             attestations = entry_attestations(entry)
-            if old.get("attestations") != attestations:
+            if attestations and old.get("attestations") != attestations:
                 old["attestations"] = attestations
                 save_lock(lock)
             return entry
@@ -468,7 +468,7 @@ def install(
             raise RegistryError("bundle metadata does not match the index")
         try:
             recipe = load_recipe(extract_to / "recipe.yaml")
-        except (OSError, ValueError) as e:
+        except (OSError, ValueError, yaml.YAMLError) as e:
             raise RegistryError(f"bundle recipe does not load: {e}") from e
         if recipe.id != entry["id"] or recipe.version != entry["version"]:
             raise RegistryError("bundle recipe metadata does not match the index")
@@ -543,7 +543,7 @@ def update(
                 raise RegistryError(
                     f"{entry['id']}@{entry['version']} has no attestation"
                 )
-            if item.get("attestations") != attestations:
+            if attestations and item.get("attestations") != attestations:
                 metadata_updates[item["id"]] = attestations
                 changed.append(entry)
             continue

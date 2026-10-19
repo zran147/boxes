@@ -174,9 +174,10 @@ def publish(
                 f"{recipe.id}@{recipe.version} already exists with different content",
                 status=409,
             )
-        for entry in same:
-            entry["attestations"] = attestations
-            entry["attestation"] = attestations[0] if attestations else None
+        if attestations:
+            for entry in same:
+                entry["attestations"] = attestations
+                entry["attestation"] = attestations[0]
     else:
         entries.append(new_entry)
     entries.sort(key=lambda entry: (entry["id"], registry_client._version_key(entry["version"])))

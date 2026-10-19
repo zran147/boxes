@@ -147,12 +147,18 @@ def load_recipe(path: Path) -> Recipe:
     if not os_list or not isinstance(os_list, list):
         raise ValueError(f"{rid}: os must be a non-empty list")
 
+    for key in ("requires", "provides"):
+        raw = data.get(key, [])
+        if not isinstance(raw, list) or any(not isinstance(item, str) for item in raw):
+            raise ValueError(f"{rid}: {key} must be a list of fact strings")
     requires = [parse_fact(f) for f in data.get("requires", [])]
     provides = [parse_fact(f) for f in data.get("provides", [])]
     if not requires:
         raise ValueError(f"{rid}: must declare at least one requires fact")
 
     yields = data.get("yields", []) or []
+    if not isinstance(yields, list) or any(not isinstance(y, str) for y in yields):
+        raise ValueError(f"{rid}: yields must be a list of strings")
     for y in yields:
         if y not in GOALS:
             raise ValueError(f"{rid}: yields entries must be in {sorted(GOALS)}, got {y!r}")
@@ -160,8 +166,13 @@ def load_recipe(path: Path) -> Recipe:
     for f in [*requires, *provides]:
         validate_fact(f)
 
+    params_data = data.get("params") or {}
+    if not isinstance(params_data, dict):
+        raise ValueError(f"{rid}: params must be a mapping")
     params: dict[str, ParamSpec] = {}
-    for name, spec in (data.get("params") or {}).items():
+    for name, spec in params_data.items():
+        if not isinstance(name, str) or not name:
+            raise ValueError(f"{rid}: param names must be non-empty strings")
         if not isinstance(spec, dict):
             raise ValueError(f"{rid}: param {name!r} must be a mapping")
         ptype = spec.get("type")
@@ -259,6 +270,10 @@ def load_recipe(path: Path) -> Recipe:
     if poc_timeout <= 0:
         raise ValueError(f"{rid}: poc_timeout must be positive, got {poc_timeout}")
 
+    actor = str(data["actor"]) if data.get("actor") is not None else None
+    if actor is not None and not actor.strip():
+        raise ValueError(f"{rid}: actor must not be empty")
+
     tools = data.get("tools") or []
     if not isinstance(tools, list) or any(not isinstance(t, str) or not t for t in tools):
         raise ValueError(f"{rid}: tools must be a list of non-empty strings")
@@ -285,7 +300,7 @@ def load_recipe(path: Path) -> Recipe:
         provision=str(provision) if provision else None,
         poc=str(poc) if poc else None,
         poc_backend=poc_backend,
-        actor=str(data["actor"]) if data.get("actor") is not None else None,
+        actor=actor,
         poc_context=poc_context,
         poc_timeout=poc_timeout,
         assets=str(assets) if assets else None,

@@ -129,11 +129,22 @@ def materialize(plan: Plan, build_seed: int) -> Manifest:
                 fixed_by_var[k] = v
 
     values: dict[str, object] = {}
-    # A generated username must not collide with a fixed literal that another
-    # recipe (or an earlier substitution) already uses as an account name.
+    # A generated username must not collide with a fixed literal or a chosen
+    # string value that another recipe already uses as an account name.
     used_users: set[str] = {
         str(value) for value in fixed_by_var.values() if isinstance(value, str)
     }
+    for step in plan.steps:
+        for fact in [*step.requires, *step.provides]:
+            used_users.update(
+                str(value) for value in fact.args if isinstance(value, str)
+            )
+        for spec in step.recipe.params.values():
+            if spec.type == "choice":
+                used_users.update(
+                    str(value) for value in (spec.values or [])
+                    if isinstance(value, str)
+                )
     for varname in uf.all():
         root = uf.find(varname)
         if root in values:

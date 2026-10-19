@@ -107,3 +107,12 @@ def test_assets_cannot_escape_the_recipe_directory(tmp_path):
             "poc:\n  context: attacker\n  container: ./poc.sh",
             extra="assets: /etc",
         )
+
+
+def test_empty_actor_is_rejected(tmp_path):
+    with pytest.raises(ValueError, match="actor must not be empty"):
+        _write(
+            tmp_path,
+            "poc:\n  context: target\n  container: ./poc.sh",
+            extra='actor: ""',
+        )

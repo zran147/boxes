@@ -151,18 +151,23 @@ def up(rebuild: bool = False) -> ExecResult:
     if not res.ok:
         _run(["docker", "rm", "-f", CONTAINER])
         return res
-    for _ in range(20):
+    healthy = False
+    for _ in range(60):
         if services_ok():
+            healthy = True
             break
         time.sleep(0.5)
-    return ExecResult(0, json.dumps({
+    payload = json.dumps({
         "container": CONTAINER,
         "network": NETWORK,
         "url": proxy_url(),
         "apt_proxy_url": apt_proxy_url(),
         "artifacts_url": artifacts_url(),
-        "healthy": services_ok(),
-    }), "")
+        "healthy": healthy,
+    })
+    if not healthy:
+        return ExecResult(1, payload, "proxy did not become healthy")
+    return ExecResult(0, payload, "")
 
 
 def down(clean: bool = False) -> ExecResult:

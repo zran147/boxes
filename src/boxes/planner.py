@@ -388,17 +388,31 @@ def is_relevant(plan: Plan) -> bool:
 
 
 def satisfies(plan: Plan) -> bool:
-    """Re-simulate the plan and check every precondition was met in order.
+    """Re-simulate the plan using the bindings the planner actually chose.
 
-    Uses the same backtracking unification as the planner. A greedy per-fact
-    match is not enough: with several credential sets in state, the first fact
-    that matches one requirement can make a later requirement unsatisfiable
-    even though a consistent binding exists.
+    Recomputing a fresh first application is not equivalent: a step can have
+    several valid bindings, and the one chosen for the plan is what later
+    steps depend on. This walks the recorded substitutions and verifies each
+    requirement against the state produced by the planned chain.
     """
     state = initial_state(plan.os_name)
     for step in plan.steps:
-        apps = list(_applications(step.recipe, state, random.Random(0), step.instance))
-        if not apps:
+        reqs = [subst_fact(f, step.subst) for f in step.requires]
+        for req in reqs:
+            if req in state:
+                continue
+            # open_port preconditions are free in the planner; they become part
+            # of the machine's service inventory rather than a state fact.
+            if (
+                req.pred == "open_port"
+                and len(req.args) == 2
+                and req.args[0] == TARGET
+            ):
+                continue
             return False
-        state = apps[0][3]
+        provided = [subst_fact(f, step.subst) for f in step.provides]
+        new = [*provided, *(req for req in reqs if req.pred == "open_port")]
+        for fact in new:
+            if fact not in state:
+                state.append(fact)
     return True

@@ -130,3 +130,16 @@ def test_concurrent_publishes_keep_both_entries(api):
     ids = {entry["id"] for entry in index["recipes"]}
     assert ids == {"api-test", "api-test-2"}
     assert index["sequence"] == 2
+
+
+def test_api_republish_without_attestation_preserves_evidence(api):
+    attestation = _attestation(api.source, api.keys["private"], api.tmp_path / "att")
+    registry_client.publish_api(
+        api.url, api.source, "tester", api.keys["private"], attestation
+    )
+    registry_client.publish_api(api.url, api.source, "tester", api.keys["private"])
+    registry_client.add_registry("api", api.url, api.keys["public"])
+    index = registry_client.fetch_index(
+        registry_client.load_config()["registries"]["api"]
+    )
+    assert index["recipes"][0]["attestations"]

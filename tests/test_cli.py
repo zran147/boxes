@@ -115,3 +115,21 @@ def test_missing_recipe_directories_are_reported(tmp_path, monkeypatch):
 
     with pytest.raises(FileNotFoundError):
         cli._load_all_recipes(args)
+
+
+def test_new_refuses_an_installed_id(tmp_path, monkeypatch, capsys):
+    installed = tmp_path / "installed"
+    shutil.copytree(
+        RECIPES / "web-env-leak-creds", installed / "web-env-leak-creds"
+    )
+    monkeypatch.setenv("BOXES_REGISTRY_DIR", str(installed))
+    args = SimpleNamespace(
+        recipes=str(tmp_path / "recipes"),
+        id="web-env-leak-creds",
+        kind="discovery",
+        os=None,
+        difficulty="medium",
+        seed=0,
+    )
+    assert cli.cmd_new(args) == 2
+    assert "installed registry" in capsys.readouterr().err
