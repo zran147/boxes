@@ -15,11 +15,12 @@ It works in three layers:
 3. **Check** — a plan is only emitted if every precondition was met earlier, and
    a recipe is only considered proven if its PoC exits 0.
 
-Status: **P0–P3 done.** Numeric recipe difficulty (1–10) with easy/medium/hard
-CLI filters, typed parameters/usernames, the manifest-driven attacker toolkit,
-the Ubuntu 22.04/24.04 + Debian 12 matrix, and the Docker acceptance script
-are implemented. Themes are deferred until the catalogue is larger (>50
-recipes); planner-scale tuning follows as it grows. P4 (registry) is next.
+Status: **P0–P3 done. P4 in progress.** Numeric recipe difficulty (1–10),
+typed parameters/usernames, the manifest-driven attacker toolkit, the Ubuntu
+22.04/24.04 + Debian 12 matrix, and Docker acceptance are done. The signed
+static registry and client are implemented (bundles, Ed25519 trust, lockfile,
+install/update/verify, untrusted-tier guard); the API server, hardened sandbox,
+and per-recipe CI are next. Themes remain deferred (>50 recipes).
 
 ## Quick start
 
@@ -598,6 +599,70 @@ service's HTTP→HTTPS by-hash redirects. After a host or Docker restart, run
 
 The sudoers rule must allow the helper subcommands, hence `boxes net *`.
 
+## Registry (P4, in progress)
+
+The first P4 slice is a **signed static registry** and client. A registry is a
+directory (or HTTP prefix) with a signed `index.json` and content-addressed
+bundles:
+
+```text
+registry/
+  index.json
+  bundles/<bundle-sha256>.tar.gz
+```
+
+A bundle is a deterministic `tar.gz` containing `bundle.json` and the recipe
+files. The index is signed by the **registry operator** key; every bundle is
+signed by its **publisher** key and content-addressed by its manifest hash.
+Signatures establish provenance, not safety.
+
+```bash
+# keys: private (<out>.key, 0600) and public (<out>.pub)
+boxes registry keygen --out ~/.config/boxes/dev
+
+# publish a recipe directory to a static registry
+boxes registry publish recipes/my-recipe \
+    --registry-dir /srv/boxes-registry \
+    --publisher me --key ~/.config/boxes/dev.key
+
+# trust a registry by pinning its operator public key
+boxes registry add local /srv/boxes-registry --key ~/.config/boxes/dev.pub
+
+boxes registry search web
+boxes registry install my-recipe
+boxes registry update
+boxes registry verify
+boxes registry uninstall my-recipe
+```
+
+- Config: `~/.config/boxes/registries.json` (override with `BOXES_CONFIG_FILE`
+  or `BOXES_CONFIG_DIR`).
+- Installed recipes: `.boxes-registry/recipes/<id>/` (gitignored); the project
+  `boxes.lock` pins registry URL/operator fingerprint, bundle hash, publisher
+  key/signature, file hashes, and the verified index sequence.
+- Rollback protection: a signed index whose sequence is lower than the
+  client's remembered sequence is refused. The lock is the local pin; the
+  signed index is re-fetched for `verify`/`update` unless `--offline` is used.
+- Tampering with the index, bundle, file, publisher key, or lock manifest is
+  rejected.
+
+### Untrusted tier
+
+Registry-installed recipes are **untrusted**. Until the hardened sandbox
+milestone lands:
+
+- QEMU verification of an installed registry recipe is refused;
+- Docker verification requires an explicit opt-in:
+
+```bash
+boxes verify --recipe my-recipe --allow-untrusted
+```
+
+The opt-in warns that the current container runner is not yet the locked
+sandbox. First-party recipes in `recipes/` remain the trusted local tier. The
+next P4 milestones are the reference API server, the locked Docker sandbox +
+attestations, and per-recipe CI.
+
 ## Roadmap
 
 | Stage | Scope | Status |
@@ -606,4 +671,4 @@ The sudoers rule must allow the helper subcommands, hence `boxes net *`.
 | **P1** — container fast path | Pluggable backend, target + attacker images, internal network, shared attacker container, provision/poc contract, assets, L2 + L3 verification, content-addressed cache, parallel jobs, real recipes | **Done** |
 | **P2** — fidelity + branching | QEMU (KVM auto/TCG fallback) + prebaked base + snapshots; one PoC per recipe (`poc.container` XOR `poc.vm`); pre-PoC snapshot/restore; shared-prefix DAG with one-VM verification and attacker reset; hybrid provisioning proxy (durable apt cache + squid + artifact store) with egress-only phase and seal; apt snapshot pinning; VM base checksum/resume/store overrides; proxy health/cleanup | **Done** |
 | **P3** — coherence + scale | Numeric difficulty 1–10 (machine = hardest recipe; separate user/root; provisional easy/medium/hard CLI bands; length/shape separate); typed params and human-looking usernames; weighted choices; manifest-driven attacker toolkit with lint/check; Ubuntu 22.04/24.04 + Debian 12 Docker (13/13 each); QEMU profiles, per-OS stores, and verified VM chains on all three; Docker integration matrix and acceptance script. Themes deferred until the catalogue is large enough (>50 recipes); planner-scale tuning as it grows. | **Done** |
-| **P4** — registry | Recipe registry API + client, signed recipes, sandboxed execution, per-recipe CI | Planned |
+| **P4** — registry | In progress: signed static registry and client, deterministic content-addressed bundles, Ed25519 operator/publisher signatures, rollback protection, lockfile, install/update/verify, untrusted-tier guard. Next: reference API server, hardened sandbox + attestations, per-recipe CI. | **In progress** |

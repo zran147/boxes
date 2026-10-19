@@ -52,3 +52,19 @@ def test_image_tools_lists_the_attacker_toolkit(capsys):
     out = capsys.readouterr().out
     assert "nmap" in out
     assert "impacket-wmiexec" in out
+
+
+def test_registry_keygen_cli(tmp_path, capsys):
+    assert main(["registry", "keygen", "--out", str(tmp_path / "dev")]) == 0
+    out = capsys.readouterr().out
+    assert "fingerprint:" in out
+    assert (tmp_path / "dev.key").is_file()
+    assert (tmp_path / "dev.pub").is_file()
+
+
+def test_registry_list_empty_cli(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("BOXES_CONFIG_FILE", str(tmp_path / "config.json"))
+    monkeypatch.setenv("BOXES_LOCKFILE", str(tmp_path / "boxes.lock"))
+    monkeypatch.setenv("BOXES_REGISTRY_DIR", str(tmp_path / "installed"))
+    assert main(["registry", "list"]) == 0
+    capsys.readouterr()

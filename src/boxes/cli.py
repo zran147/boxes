@@ -32,6 +32,10 @@ from .nethelper import (
 )
 from .planner import generate, generate_paths, satisfies
 from .registry import load_registry, select
+from . import registry_client
+from .registry_client import RegistryError
+from .signing import SignatureError
+from . import signing as registry_client_signing
 from .runner import verify_machine, verify_paths, verify_recipes
 from .scaffold import create_recipe
 from .osinfo import SUPPORTED_OS, vm_store
@@ -40,6 +44,51 @@ from .writeup import paths_to_dict, plan_to_dict, render_machine_markdown, rende
 
 DEFAULT_RECIPES = Path("recipes")
 CACHE_FILE = PROJECT_ROOT / ".boxes-cache" / "verifications.json"
+
+
+def _load_all_recipes(args) -> list:
+    recipes = load_registry(args.recipes)
+    installed_dir = registry_client.registry_recipes()
+    if installed_dir.is_dir():
+        installed = load_registry(installed_dir)
+        local_ids = {r.id for r in recipes}
+        for recipe in installed:
+            if recipe.id in local_ids:
+                raise ValueError(
+                    f"recipe {recipe.id!r} is installed from a registry and also "
+                    f"exists locally in {args.recipes}"
+                )
+        recipes = recipes + installed
+    return recipes
+
+
+def _untrusted_check(args, recipes) -> bool:
+    untrusted = sorted({r.id for r in recipes if registry_client.is_registry_recipe(r)})
+    if not untrusted:
+        return True
+    if args.backend == "qemu":
+        print(
+            "refusing QEMU verification of untrusted registry recipes: "
+            + ", ".join(untrusted)
+            + ". The VM sandbox milestone is not implemented yet; use --backend docker.",
+            file=sys.stderr,
+        )
+        return False
+    if not args.allow_untrusted:
+        print(
+            "untrusted registry recipes: "
+            + ", ".join(untrusted)
+            + ". Pass --allow-untrusted to run them in Docker "
+            "(the hardened sandbox is the next P4 milestone).",
+            file=sys.stderr,
+        )
+        return False
+    print(
+        "warning: running untrusted registry recipes in Docker without the "
+        "hardened sandbox yet: " + ", ".join(untrusted),
+        file=sys.stderr,
+    )
+    return True
 
 
 def _difficulty_note(args) -> str:
@@ -55,7 +104,7 @@ def _difficulty_note(args) -> str:
 
 
 def cmd_gen(args) -> int:
-    recipes = load_registry(args.recipes)
+    recipes = _load_all_recipes(args)
     errs = lint(recipes)
     if errs:
         print("recipe lint failed:", file=sys.stderr)
@@ -141,7 +190,7 @@ def cmd_gen(args) -> int:
 
 
 def cmd_recipes(args) -> int:
-    recipes = load_registry(args.recipes)
+    recipes = _load_all_recipes(args)
     for r in sorted(recipes, key=lambda x: (x.kind, x.id)):
         flag = f"  yields={','.join(r.yields)}" if r.yields else ""
         print(f"{r.id:32} {r.kind:14} v{r.version}  os={','.join(r.os)}{flag}")
@@ -149,7 +198,7 @@ def cmd_recipes(args) -> int:
 
 
 def cmd_lint(args) -> int:
-    recipes = load_registry(args.recipes)
+    recipes = _load_all_recipes(args)
     errs = lint(recipes)
     if errs:
         for e in errs:
@@ -160,7 +209,7 @@ def cmd_lint(args) -> int:
 
 
 def cmd_test_recipe(args) -> int:
-    recipes = load_registry(args.recipes)
+    recipes = _load_all_recipes(args)
     if args.all:
         targets = recipes
     elif args.id:
@@ -197,10 +246,10 @@ def cmd_new(args) -> int:
         return 2
     print(f"created {path}")
 
-    recipes = load_registry(args.recipes)
+    recipes = _load_all_recipes(args)
     errs = lint(recipes)
     if errs:
-        print("registry lint failed after scaffold:", file=sys.stderr)
+        print("recipe lint failed after scaffold:", file=sys.stderr)
         for e in errs:
             print(f"  - {e}", file=sys.stderr)
         return 1
@@ -405,7 +454,7 @@ def cmd_verify(args) -> int:
     cache = _make_cache(args)
 
     if args.machine:
-        recipes = load_registry(args.recipes)
+        recipes = _load_all_recipes(args)
         pool = select(recipes, args.os, fidelity=backend.fidelity)
         build_seed = args.build_seed if args.build_seed is not None else random.randrange(1, 2**31)
 
@@ -433,6 +482,8 @@ def cmd_verify(args) -> int:
                     f"note: only {len(paths)} distinct path(s) available",
                     file=sys.stderr,
                 )
+            if not _untrusted_check(args, [step.recipe for path in paths for step in path.steps]):
+                return 2
             manifests = [materialize(path, build_seed) for path in paths]
             print(f"base plan seed={args.seed} build seed={build_seed} paths={len(paths)}")
             entries = []
@@ -492,6 +543,8 @@ def cmd_verify(args) -> int:
         if not satisfies(plan):
             print("internal error: generated plan does not satisfy itself", file=sys.stderr)
             return 3
+        if not _untrusted_check(args, [step.recipe for step in plan.steps]):
+            return 2
         manifest = materialize(plan, build_seed)
         print(f"plan seed={args.seed} build seed={build_seed}")
         print("chain: " + " -> ".join(s.recipe.id for s in plan.steps))
@@ -513,7 +566,7 @@ def cmd_verify(args) -> int:
             cache.put(key, {"plan_seed": plan.seed, "build_seed": build_seed})
         return 0 if result.ok else 1
 
-    recipes = load_registry(args.recipes)
+    recipes = _load_all_recipes(args)
     if args.all:
         targets = recipes
     elif args.recipe:
@@ -547,6 +600,8 @@ def cmd_verify(args) -> int:
     if not pairs:
         print("no verifiable recipes", file=sys.stderr)
         return 1
+    if not _untrusted_check(args, [recipe for recipe, _fixture in pairs]):
+        return 2
 
     results = verify_recipes(
         pairs,
@@ -567,6 +622,108 @@ def cmd_verify(args) -> int:
     suffix = f" ({cached} cached)" if cached else ""
     print(f"\n{ok}/{total} recipe(s) verified{suffix}")
     return 0 if harness_failures == 0 and ok == len(results) else 1
+
+
+def cmd_registry(args) -> int:
+    try:
+        if args.registry_command == "keygen":
+            info = registry_client_signing.keygen(args.out)
+            print(f"private: {info['private']}")
+            print(f"public:  {info['public']}")
+            print(f"fingerprint: {info['fingerprint']}")
+            return 0
+        if args.registry_command == "add":
+            reg = registry_client.add_registry(args.name, args.url, args.key)
+            print(f"added {args.name}: {reg['url']}")
+            print(f"operator fingerprint: {reg['operator_fingerprint']}")
+            print(f"index sequence: {reg['sequence']}")
+            return 0
+        if args.registry_command == "remove":
+            registry_client.remove_registry(args.name)
+            print(f"removed registry {args.name}")
+            return 0
+        if args.registry_command == "list":
+            for reg in registry_client.list_registries():
+                print(
+                    f"{reg['name']:16} {reg['url']}  "
+                    f"seq={reg['sequence']}  key={reg['operator_fingerprint'][:16]}"
+                )
+            for item in registry_client.installed():
+                print(
+                    f"  installed {item['id']}@{item['version']} "
+                    f"from {item['registry']}"
+                )
+            return 0
+        if args.registry_command == "search":
+            for entry in registry_client.search(args.query, args.registry):
+                meta = entry.get("metadata", {})
+                print(
+                    f"{entry['id']}@{entry['version']}  "
+                    f"publisher={entry['publisher']}  "
+                    f"difficulty={meta.get('difficulty')}  "
+                    f"os={','.join(meta.get('os', []))}"
+                )
+                if meta.get("description"):
+                    print(f"  {meta['description']}")
+            return 0
+        if args.registry_command == "install":
+            rid = args.spec.split("@", 1)[0]
+            local_ids = set()
+            if Path(args.recipes).is_dir():
+                local_ids = {r.id for r in load_registry(args.recipes)}
+            if rid in local_ids:
+                print(
+                    f"refusing to install {rid!r}: it collides with a local recipe; "
+                    "registry namespaces are the next registry milestone",
+                    file=sys.stderr,
+                )
+                return 2
+            entry = registry_client.install(
+                args.spec, args.registry, force=args.force
+            )
+            print(f"installed {entry['id']}@{entry['version']} from {entry['publisher']}")
+            print(f"bundle: {entry['bundle']}")
+            return 0
+        if args.registry_command == "update":
+            changed = registry_client.update(args.registry)
+            if not changed:
+                print("nothing to update")
+            for entry in changed:
+                print(f"updated {entry['id']}@{entry['version']}")
+            return 0
+        if args.registry_command == "uninstall":
+            registry_client.uninstall(args.id)
+            print(f"uninstalled {args.id}")
+            return 0
+        if args.registry_command == "verify":
+            results = registry_client.verify_installed(offline=args.offline)
+            if not results:
+                print("no installed registry recipes")
+            failed = False
+            for result in results:
+                if result["errors"]:
+                    failed = True
+                    print(f"FAIL {result['id']}@{result['version']}")
+                    for error in result["errors"]:
+                        print(f"  {error}")
+                else:
+                    print(f"OK   {result['id']}@{result['version']}")
+            return 1 if failed else 0
+        if args.registry_command == "publish":
+            index = registry_client.publish(
+                args.recipe_dir,
+                args.registry_dir,
+                args.publisher,
+                args.key,
+                args.operator_key,
+            )
+            print(f"published to {Path(args.registry_dir) / 'index.json'}")
+            print(f"index sequence: {index['sequence']}")
+            return 0
+    except (RegistryError, SignatureError, FileNotFoundError, ValueError) as e:
+        print(f"registry error: {e}", file=sys.stderr)
+        return 1
+    return 2
 
 
 def cmd_net(args) -> int:
@@ -696,6 +853,8 @@ def build_parser() -> argparse.ArgumentParser:
     v.add_argument("--accel", choices=["auto", "kvm", "tcg"], default=None,
                    help="QEMU acceleration (default: $BOXES_QEMU_ACCEL or auto)")
     v.add_argument("--keep", action="store_true", help="keep the container for debugging")
+    v.add_argument("--allow-untrusted", action="store_true", dest="allow_untrusted",
+                   help="run registry-installed recipes in Docker (QEMU is refused until the sandbox)")
     v.add_argument("--jobs", type=int, default=min(4, os.cpu_count() or 1),
                    help="parallel containers when verifying --all")
     v.add_argument("--apt-snapshot", default=None, dest="apt_snapshot",
@@ -745,6 +904,58 @@ def build_parser() -> argparse.ArgumentParser:
     ps.set_defaults(func=cmd_proxy)
     pc = px_sub.add_parser("clean", help="stop the proxy and wipe the cache")
     pc.set_defaults(func=cmd_proxy)
+
+    rg = sub.add_parser("registry", help="signed recipe registry")
+    rg_sub = rg.add_subparsers(dest="registry_command", required=True)
+
+    rk = rg_sub.add_parser("keygen", help="generate an Ed25519 key pair")
+    rk.add_argument("--out", required=True, help="output prefix (<out>.key/<out>.pub)")
+    rk.set_defaults(func=cmd_registry)
+
+    ra = rg_sub.add_parser("add", help="add and trust a signed static registry")
+    ra.add_argument("name")
+    ra.add_argument("url", help="registry directory or http(s) URL")
+    ra.add_argument("--key", required=True, help="registry operator public key")
+    ra.set_defaults(func=cmd_registry)
+
+    rr = rg_sub.add_parser("remove", help="remove a registry configuration")
+    rr.add_argument("name")
+    rr.set_defaults(func=cmd_registry)
+
+    rl = rg_sub.add_parser("list", help="list registries and installed recipes")
+    rl.set_defaults(func=cmd_registry)
+
+    rs = rg_sub.add_parser("search", help="search a verified registry index")
+    rs.add_argument("query")
+    rs.add_argument("--registry", default=None)
+    rs.set_defaults(func=cmd_registry)
+
+    ri = rg_sub.add_parser("install", help="install a pinned recipe bundle")
+    ri.add_argument("spec", help="id or id@version")
+    ri.add_argument("--registry", default=None)
+    ri.add_argument("--force", action="store_true")
+    ri.set_defaults(func=cmd_registry)
+
+    ru = rg_sub.add_parser("update", help="update installed recipes")
+    ru.add_argument("--registry", default=None)
+    ru.set_defaults(func=cmd_registry)
+
+    run = rg_sub.add_parser("uninstall", help="remove an installed recipe")
+    run.add_argument("id")
+    run.set_defaults(func=cmd_registry)
+
+    rv = rg_sub.add_parser("verify", help="verify installed bundles and the signed index")
+    rv.add_argument("--offline", action="store_true", help="verify only the lock and files")
+    rv.set_defaults(func=cmd_registry)
+
+    rp = rg_sub.add_parser("publish", help="publish a recipe to a static registry")
+    rp.add_argument("recipe_dir")
+    rp.add_argument("--registry-dir", required=True, dest="registry_dir")
+    rp.add_argument("--publisher", required=True)
+    rp.add_argument("--key", required=True, help="publisher private key")
+    rp.add_argument("--operator-key", default=None, dest="operator_key",
+                    help="operator private key (defaults to --key)")
+    rp.set_defaults(func=cmd_registry)
 
     return p
 

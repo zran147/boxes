@@ -7,7 +7,7 @@ name = "boxes"
 version = "0.0.1"
 description = "Procedural generator for HTB-style vulnerable machines"
 requires-python = ">=3.11"
-dependencies = ["PyYAML>=6"]
+dependencies = ["PyYAML>=6", "cryptography>=41"]
 
 [project.scripts]
 boxes = "boxes.cli:main"
