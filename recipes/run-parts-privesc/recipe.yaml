@@ -1,0 +1,20 @@
+id: run-parts-privesc
+version: 1.0.0
+kind: privesc
+description: "Hijack the root run-parts invocation through the staff-writable PATH."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 5
+yields: ["root"]
+provision: ./provision.sh
+poc:
+  context: target
+  container: ./poc.sh
+actor: $u
+requires:
+  - user_shell($u)
+provides:
+  - access_root()
+walkthrough: |
+  Root invokes `run-parts` with `/usr/local/bin` first in `PATH`. The
+          `staff` group can write there, so we replace `run-parts` with a script
+          that copies `/root/root.txt`.

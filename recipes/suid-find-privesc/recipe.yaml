@@ -11,7 +11,7 @@ poc:
 actor: $u
 yields: ["root"]
 requires:
-  - access_shell($u)
+  - user_shell($u)
 provides:
   - access_root()
 walkthrough: |

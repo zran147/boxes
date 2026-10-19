@@ -1,0 +1,24 @@
+id: cracked-key-creds
+version: 1.0.0
+kind: creds
+description: "Recover Matt's reused password from the encrypted backup key."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 4
+provision: ./provision.sh
+poc:
+  context: target
+  container: ./poc.sh
+actor: $u
+requires:
+  - access_shell($u)
+provides:
+  - creds.uname(Matt)
+  - creds.pass($p)
+params:
+
+  p:
+    type: password
+    length: 12
+walkthrough: |
+  The encrypted key in `/opt` cracks to `{p}`. Matt reused the same
+          password for his system account.

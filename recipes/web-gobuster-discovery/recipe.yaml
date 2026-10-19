@@ -16,8 +16,8 @@ provides:
 params:
   path:
     type: choice
-    values: ["admin", "backup", "dev", "nibbleblog", "plugins", "vtigercrm", "balance-transfer", "cgi-bin"]
-    weights: [3, 1, 1, 1, 1, 1, 1, 1]
+    values: ["admin", "backup", "dev", "nibbleblog", "plugins", "vtigercrm", "balance-transfer", "cgi-bin", "secret", "administrator1", "magento", "networked", "writeup", "nostromo", "ona"]
+    weights: [3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
 walkthrough: |
   Directory brute forcing on port 80 turns up `/{path}/`, which was not linked
   anywhere on the site. (Discovery only — this tells us the endpoint exists.)

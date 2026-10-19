@@ -16,6 +16,7 @@ requires:
   - knows(vhost, $vhost)
 provides:
   - access_shell($u)
+  - user_shell($u)
 params:
 
   u:

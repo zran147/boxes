@@ -1,0 +1,26 @@
+id: cron-pivot-foothold
+version: 1.0.0
+kind: foothold
+description: "Abuse a scheduled PHP script to pivot from the web user to guly."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 5
+yields: ["user"]
+provision: ./provision.sh
+poc:
+  context: target
+  container: ./poc.sh
+actor: $u
+requires:
+  - access_shell($u)
+provides:
+  - access_shell(guly)
+  - user_shell(guly)
+params:
+
+  u:
+    type: choice
+    values: ["www-data", "apache"]
+walkthrough: |
+  A three-minute scheduler runs a PHP script owned by guly. Writing a
+          crafted filename into the upload directory makes the script execute
+          our command as guly and exposes `user.txt`.

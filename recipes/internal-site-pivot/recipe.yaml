@@ -1,0 +1,24 @@
+id: internal-site-pivot
+version: 1.0.0
+kind: foothold
+description: "Use the internal PHP site's credentials to execute as joanna."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 5
+yields: ["user"]
+provision: ./provision.sh
+poc:
+  context: target
+  container: ./poc.sh
+actor: $u
+assets: ./files
+requires:
+  - open_port($h, 52846)
+  - access_shell($u)
+  - creds.uname($j)
+  - creds.pass($p)
+provides:
+  - access_shell(joanna)
+  - user_shell(joanna)
+walkthrough: |
+  The internal site accepts the database credential `{j}` / `{p}` and its
+          upload path runs as `joanna`. We read `joanna`'s `user.txt`.

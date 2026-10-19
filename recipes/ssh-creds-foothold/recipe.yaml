@@ -16,6 +16,7 @@ requires:
   - creds.pass($p)
 provides:
   - access_shell($u)
+  - user_shell($u)
 walkthrough: |
   We reuse the credentials we already have (`{u}` / `{p}`) against SSH on port
   22. They are valid and return an interactive shell as `{u}` — whose home

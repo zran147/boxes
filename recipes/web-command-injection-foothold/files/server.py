@@ -66,6 +66,16 @@ class Handler(BaseHTTPRequestHandler):
                 Path(UPLOAD).write_text(body)
                 self._send("uploaded\n")
                 return
+        if MODE == "command_auth" and path == route("/login"):
+            form = urllib.parse.parse_qs(body)
+            if form.get("username", [""])[0] == USER and form.get("password", [""])[0] == PASS:
+                self._send("ok\n", headers={
+                    "Set-Cookie": "session=ok; Path=/",
+                    "Location": route("/"),
+                })
+            else:
+                self._send("bad credentials\n", 403)
+            return
         if MODE == "sqli" and path == "/login":
             form = urllib.parse.parse_qs(body)
             username = form.get("username", [""])[0]
@@ -86,7 +96,10 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:  # noqa: BLE001
                 self._send(str(e), 404)
             return
-        if MODE == "command" and path == route("/run"):
+        if MODE in ("command", "command_auth") and path == route("/run"):
+            if MODE == "command_auth" and not self._authorised():
+                self._send("login required\n", 403)
+                return
             self._send(run(query.get("cmd", [""])[0]))
             return
         if MODE == "shellshock" and path == route("/user.sh"):

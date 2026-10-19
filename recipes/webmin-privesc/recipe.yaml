@@ -1,0 +1,21 @@
+id: webmin-privesc
+version: 1.0.0
+kind: privesc
+description: "Exploit the local Webmin command-injection endpoint."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 6
+yields: ["root"]
+provision: ./provision.sh
+poc:
+  context: target
+  container: ./poc.sh
+actor: $u
+assets: ./files
+requires:
+  - open_port($h, 10000)
+  - user_shell($u)
+provides:
+  - access_root()
+walkthrough: |
+  Webmin runs as root. Its package-update endpoint injects our command,
+          returning `/root/root.txt`.

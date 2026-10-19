@@ -13,7 +13,7 @@ poc:
 assets: ./files
 requires:
   - open_port($h, 8446)
-  - access_shell($u)
+  - user_shell($u)
   - knows(service, samba)
 provides:
   - access_root()

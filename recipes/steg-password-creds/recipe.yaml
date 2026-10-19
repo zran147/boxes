@@ -1,0 +1,25 @@
+id: steg-password-creds
+version: 1.0.0
+kind: creds
+description: "Extract a password from the steganographic image and backup file."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 2
+provision: ./provision.sh
+poc:
+  context: target
+  container: ./poc.sh
+actor: $u
+requires:
+  - access_shell($u)
+provides:
+  - creds.uname(djmardov)
+  - creds.pass($p)
+params:
+
+  p:
+    type: password
+    length: 14
+walkthrough: |
+  The `ircd` shell can read `/home/djmardov/Documents/.backup`, which
+          contains the password hidden in the image: `{p}`. It belongs to
+          `djmardov`.

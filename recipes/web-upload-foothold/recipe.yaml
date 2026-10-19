@@ -18,6 +18,7 @@ requires:
   - creds.pass($p)
 provides:
   - access_shell($u)
+  - user_shell($u)
 walkthrough: |
   After logging into the `{path}` application as `{u}` / `{p}`, the upload
           form accepts a server-side script. Requesting the uploaded file

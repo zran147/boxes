@@ -1,0 +1,24 @@
+id: password-backup-creds
+version: 1.0.0
+kind: creds
+description: "Decode the password backup found in the Joomla user's home."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 3
+provision: ./provision.sh
+poc:
+  context: target
+  container: ./poc.sh
+actor: $u
+requires:
+  - access_shell($u)
+provides:
+  - creds.uname(floris)
+  - creds.pass($p)
+params:
+
+  p:
+    type: password
+    length: 14
+walkthrough: |
+  The backup in `/home/floris` is a hex-encoded compressed archive. After
+          decoding it, the archive contains the password `{p}` for `floris`.

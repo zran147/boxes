@@ -1,0 +1,26 @@
+id: elasticsearch-creds
+version: 1.0.0
+kind: creds
+description: "Read credentials from an unauthenticated Elasticsearch index."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 2
+tools: [curl]
+provision: ./provision.sh
+poc:
+  context: attacker
+  container: ./poc.sh
+requires:
+  - open_port($h, 9200)
+provides:
+  - creds.uname($u)
+  - creds.pass($p)
+params:
+
+  u:
+    type: username
+  p:
+    type: password
+    length: 14
+walkthrough: |
+  The Elasticsearch API exposes a document containing the base64 login
+          `{u}` / `{p}`.

@@ -1,0 +1,24 @@
+id: opennetadmin-db-creds
+version: 1.0.0
+kind: creds
+description: "Read the OpenNetAdmin database configuration for jimmy's password."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 3
+provision: ./provision.sh
+poc:
+  context: target
+  container: ./poc.sh
+actor: $u
+requires:
+  - access_shell($u)
+provides:
+  - creds.uname(jimmy)
+  - creds.pass($p)
+params:
+
+  p:
+    type: password
+    length: 14
+walkthrough: |
+  The ONA config file exposes the database login `jimmy` / `{p}`. The
+          password is reused for SSH.

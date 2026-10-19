@@ -1,0 +1,24 @@
+id: sudo-wrapper-privesc
+version: 1.0.0
+kind: privesc
+description: "Abuse a sudo-permitted text/pager command to run a root command."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 4
+yields: ["root"]
+provision: ./provision.sh
+poc:
+  context: target
+  container: ./poc.sh
+actor: $u
+requires:
+  - user_shell($u)
+provides:
+  - access_root()
+params:
+
+  binary:
+    type: choice
+    values: ["vi", "nano", "journalctl"]
+walkthrough: |
+  `sudo -l` permits `{binary}` as root. We invoke it through a wrapper
+          that executes a root-readable command and exposes `root.txt`.

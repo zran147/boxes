@@ -1,0 +1,28 @@
+id: cmsms-sqli-creds
+version: 1.0.0
+kind: creds
+description: "Exploit the CMS Made Simple blind SQL injection for user credentials."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 6
+tools: [curl]
+provision: ./provision.sh
+poc:
+  context: attacker
+  container: ./poc.sh
+assets: ./files
+requires:
+  - open_port($h, 8096)
+  - knows(path, $path)
+provides:
+  - creds.uname($u)
+  - creds.pass($p)
+params:
+
+  u:
+    type: username
+  p:
+    type: password
+    length: 12
+walkthrough: |
+  The CMS login is vulnerable to a timing SQL injection. The exploit
+          recovers the username `{u}` and cracked password `{p}`.

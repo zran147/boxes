@@ -250,7 +250,7 @@ def test_user_and_root_difficulty_are_separate(pool):
     assert user_hard is not None
     assert report(user_hard)["user_band"] == "hard"
 
-    root_hard = generate(pool, OS, 2, 2, 0, root_difficulty="hard")
+    root_hard = generate(pool, OS, 2, 2, 0, user_difficulty="easy", root_difficulty="hard")
     assert root_hard is not None
     assert report(root_hard)["user_band"] == "easy"
     assert report(root_hard)["root_band"] == "hard"

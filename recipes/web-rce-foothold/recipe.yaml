@@ -15,6 +15,7 @@ requires:
   - open_port($h, 8080)
 provides:
   - access_shell($web_user)
+  - user_shell($web_user)
 params:
   web_user:
     type: choice

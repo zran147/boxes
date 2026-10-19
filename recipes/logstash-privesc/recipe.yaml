@@ -1,0 +1,21 @@
+id: logstash-privesc
+version: 1.0.0
+kind: privesc
+description: "Feed a crafted log line to the root Logstash pipeline."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 6
+yields: ["root"]
+provision: ./provision.sh
+poc:
+  context: target
+  container: ./poc.sh
+actor: $u
+requires:
+  - user_shell($u)
+  - knows(service, kibana)
+provides:
+  - access_root()
+walkthrough: |
+  Logstash runs as root and executes the `comando` field from any file
+          matching `/opt/kibana/logstash_*`. We write a command that copies
+          `root.txt` to a readable path.

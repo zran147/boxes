@@ -1,0 +1,17 @@
+id: irc-service-discovery
+version: 1.0.0
+kind: discovery
+description: "Identify the UnrealIRCd backdoor build."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 2
+provision: ./provision.sh
+poc:
+  context: attacker
+  container: ./poc.sh
+requires:
+  - open_port($h, 8066)
+provides:
+  - knows(service, unrealircd)
+walkthrough: |
+  The IRC listener advertises UnrealIRCd 3.2.8.1, the version with the `AB;`
+   backdoor. We still need to turn that version into a shell.

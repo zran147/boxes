@@ -160,6 +160,7 @@ SIGNATURES: dict[str, tuple[str, ...]] = {
     "creds.pass": ("password",),
     "knows": ("what", "value"),
     "access_shell": ("user",),
+    "user_shell": ("user",),
     "access_root": (),
 }
 

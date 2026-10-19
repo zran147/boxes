@@ -1,0 +1,19 @@
+id: redis-key-foothold
+version: 1.0.0
+kind: foothold
+description: "Write an SSH public key through unauthenticated Redis."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 5
+tools: [ssh, ssh-keygen, python3]
+provision: ./provision.sh
+poc:
+  context: attacker
+  container: ./poc.sh
+requires:
+  - open_port($h, 6379)
+provides:
+  - access_shell(redis)
+walkthrough: |
+  Redis has no authentication. We use its file-write behavior to install
+          our public key in `/home/redis/.ssh/authorized_keys`, then SSH in as
+          `redis`.

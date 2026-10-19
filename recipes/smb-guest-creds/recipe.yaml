@@ -1,0 +1,26 @@
+id: smb-guest-creds
+version: 1.0.0
+kind: creds
+description: "A guest-readable SMB share leaks the web administrator credential."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 3
+tools: [curl]
+provision: ./provision.sh
+poc:
+  context: attacker
+  container: ./poc.sh
+requires:
+  - open_port($h, 8447)
+provides:
+  - creds.uname($u)
+  - creds.pass($p)
+params:
+
+  u:
+    type: username
+  p:
+    type: password
+    length: 15
+walkthrough: |
+  The guest-accessible share contains a `creds.txt` with the account
+          `{u}` / `{p}` used by the hidden administration site.

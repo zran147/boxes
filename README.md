@@ -90,8 +90,8 @@ difference in `requires`, which the planner handles.
 
 ## What it can build
 
-There are **39 recipes** in the catalogue: 38 container-verifiable recipes
-plus the VM-only kernel probe. Ten easy-Linux machine packs are documented in
+There are **67 recipes** in the catalogue: 66 container-verifiable recipes
+plus the VM-only kernel probe. Twenty easy-Linux machine packs are documented in
 [`recipes/easy-linux-machines.md`](recipes/easy-linux-machines.md).
 
 Container recipes (all verified end-to-end):
@@ -355,6 +355,10 @@ Credential-consuming steps should require `creds.uname($u)` and
 lets the planner reuse a username from one leak and a password from another, or
 satisfy only one half from a prior step.
 
+User-yielding footholds provide both `access_shell($u)` and `user_shell($u)`.
+Root and post-user discovery steps require `user_shell($u)`, so they run as the
+actual user principal rather than an earlier service account.
+
 `boxes verify --machine` requires every step to have provision+poc; otherwise it
 reports which are symbolic-only instead of silently skipping them.
 
@@ -373,9 +377,9 @@ boxes verify --machine --backend qemu --os debian-12 \
 
 | OS | Docker | QEMU | VM store | Notes |
 |---|---|---|---|---|
-| `ubuntu-22.04` | 38/38 | probe + chain | `.boxes-vm/` | default; fastest TCG VM |
-| `ubuntu-24.04` | 38/38 | probe + chain | `.boxes-vm/ubuntu-24.04/` | TCG prebake ~24 min, chain ~9 min; use KVM or `BOXES_VM_BOOT_TIMEOUT=1800` |
-| `debian-12` | 38/38 | probe + chain | `.boxes-vm/debian-12/` | TCG chain ~2 min |
+| `ubuntu-22.04` | 66/66 | probe + chain | `.boxes-vm/` | default; fastest TCG VM |
+| `ubuntu-24.04` | 66/66 | probe + chain | `.boxes-vm/ubuntu-24.04/` | TCG prebake ~24 min, chain ~9 min; use KVM or `BOXES_VM_BOOT_TIMEOUT=1800` |
+| `debian-12` | 66/66 | probe + chain | `.boxes-vm/debian-12/` | TCG chain ~2 min |
 
 Container bases exist for Ubuntu 22.04, Ubuntu 24.04, and Debian 12. QEMU uses
 a matching cloud image and the per-OS store shown above. The cloud image is
@@ -444,7 +448,7 @@ boxes verify --all --clear-cache  # wipe first
 
 `--jobs` parallelizes independent recipes. Chain verification is sequential
 because every step depends on the previous ones. Container timings on this host:
-38 recipes per OS cold with 4 jobs ≈ 60–120 s (the package probe installs via
+66 recipes per OS cold with 4 jobs ≈ 2–4 min (the package probe installs via
 the proxy); warm cache ≈ 0.5 s.
 
 ## VM backend
@@ -785,5 +789,5 @@ hardening follow-ups; untrusted QEMU verification stays refused.
 | **P0** — symbolic generation | Facts + unification, typed predicates, recipes, bounded-length planner, `open_port` prelude, causal connectivity, two-seed manifest, lint, scaffold, per-recipe harness | **Done** |
 | **P1** — container fast path | Pluggable backend, target + attacker images, internal network, shared attacker container, provision/poc contract, assets, L2 + L3 verification, content-addressed cache, parallel jobs, real recipes | **Done** |
 | **P2** — fidelity + branching | QEMU (KVM auto/TCG fallback) + prebaked base + snapshots; one PoC per recipe (`poc.container` XOR `poc.vm`); pre-PoC snapshot/restore; shared-prefix DAG with one-VM verification and attacker reset; hybrid provisioning proxy (durable apt cache + squid + artifact store) with egress-only phase and seal; apt snapshot pinning; VM base checksum/resume/store overrides; proxy health/cleanup | **Done** |
-| **P3** — coherence + scale | Numeric difficulty 1–10 (machine = hardest recipe; separate user/root; provisional easy/medium/hard CLI bands; length/shape separate); typed params and human-looking usernames; weighted choices; manifest-driven attacker toolkit with lint/check; Ubuntu 22.04/24.04 + Debian 12 Docker (38/38 each); QEMU profiles, per-OS stores, and verified VM chains on all three; Docker integration matrix and acceptance script. Themes deferred until the catalogue is large enough (>50 recipes); planner-scale tuning as it grows. | **Done** |
+| **P3** — coherence + scale | Numeric difficulty 1–10 (machine = hardest recipe; separate user/root; provisional easy/medium/hard CLI bands; length/shape separate); typed params and human-looking usernames; weighted choices; manifest-driven attacker toolkit with lint/check; Ubuntu 22.04/24.04 + Debian 12 Docker (66/66 each); QEMU profiles, per-OS stores, and verified VM chains on all three; Docker integration matrix and acceptance script. Themes deferred until the catalogue is large enough (>50 recipes); planner-scale tuning as it grows. | **Done** |
 | **P4** — registry | Signed static registry and HTTP API, deterministic content-addressed bundles, Ed25519 operator/publisher signatures, rollback protection, lockfile, install/update/verify, untrusted-tier guard, locked Docker sandbox, isolated target-only QEMU profile, signed multi-OS verification attestations with require-attestation policy, per-recipe CI, static/read-write server, index expiry/revocation, operator key rotation. Follow-ups: dedicated hardware-isolated QEMU worker, TUF-style root/timestamp/transparency metadata. | **Done** |

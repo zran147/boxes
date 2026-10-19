@@ -18,6 +18,7 @@ requires:
   - creds.pass($p)
 provides:
   - access_shell($u)
+  - user_shell($u)
 walkthrough: |
   Authenticated as `{u}` / `{p}`, the application endpoint
           `/{path}/run` passes user input to a shell. We use it to read

@@ -1,0 +1,19 @@
+id: kibana-lfi-pivot
+version: 1.0.0
+kind: foothold
+description: "Use the Kibana LFI to execute JavaScript as the kibana user."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 5
+provision: ./provision.sh
+poc:
+  context: target
+  container: ./poc.sh
+actor: $u
+requires:
+  - access_shell($u)
+provides:
+  - access_shell(kibana)
+  - knows(service, kibana)
+walkthrough: |
+  The local Kibana service is vulnerable to CVE-2018-17246. A crafted
+          plugin path executes our JavaScript as `kibana`.

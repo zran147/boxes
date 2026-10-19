@@ -1,0 +1,25 @@
+id: web-shell-access
+version: 1.0.0
+kind: foothold
+description: "Reach a web execution primitive and obtain a service-account shell."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 4
+tools: [curl]
+provision: ./provision.sh
+poc:
+  context: attacker
+  container: ./poc.sh
+assets: ./files
+requires:
+  - open_port($h, 8084)
+  - knows(path, $path)
+provides:
+  - access_shell($u)
+params:
+
+  u:
+    type: choice
+    values: ["www-data"]
+walkthrough: |
+  The endpoint at `/{path}` executes commands as `{u}`. This is an access
+          step; the account does not yet own the user flag.

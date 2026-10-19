@@ -1,0 +1,20 @@
+id: python-library-hijack-privesc
+version: 1.0.0
+kind: privesc
+description: "Hijack a Python module imported by a root-run reporting script."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 5
+yields: ["root"]
+provision: ./provision.sh
+poc:
+  context: target
+  container: ./poc.sh
+actor: $u
+requires:
+  - user_shell($u)
+provides:
+  - access_root()
+walkthrough: |
+  A root scheduler runs `/opt/server_admin/reporter.py`, which imports a
+          module from a user-writable directory. We replace the module with code
+          that copies `root.txt` somewhere readable.

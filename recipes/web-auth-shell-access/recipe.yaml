@@ -1,0 +1,23 @@
+id: web-auth-shell-access
+version: 1.0.0
+kind: foothold
+description: "Authenticate to a web application and use its code-execution feature."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 5
+tools: [curl]
+provision: ./provision.sh
+poc:
+  context: attacker
+  container: ./poc.sh
+assets: ./files
+requires:
+  - open_port($h, 8098)
+  - knows(path, $path)
+  - creds.uname($u)
+  - creds.pass($p)
+provides:
+  - access_shell($u)
+walkthrough: |
+  Logging into the `{path}` application as `{u}` / `{p}` exposes its
+          command-execution endpoint. We get a web-user shell without claiming a
+          flag yet.

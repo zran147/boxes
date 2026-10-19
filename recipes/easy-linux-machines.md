@@ -32,3 +32,27 @@ boxes verify --machine --to-user 3 --to-root 2 --seed 0
 When verifying only a pack, point `--recipes` at a directory containing just
 those recipe directories. The normal project registry can still use the packs
 together with the generic recipes.
+
+## Second batch: the next ten Linux machines
+
+The next ten Linux entries in the catalogue (skipping Luke, whose writeup is
+FreeBSD, and substituting OpenAdmin) are below.
+
+| Machine | User path | Root path | Verify shape |
+|---|---|---|---|
+| **Irked** | `irc-service-discovery` → `irc-backdoor-foothold` → `steg-password-creds` → `ssh-creds-foothold` | `viewuser-suid-discovery` → `viewuser-privesc` | `--to-user 4 --to-root 2` |
+| **Curling** | `web-gobuster-discovery` → `joomla-secret-creds` → `web-auth-shell-access` → `password-backup-creds` → `ssh-creds-foothold` | `cron-discovery` → `cron-writable-privesc` | `--to-user 5 --to-root 2` |
+| **FriendZone** | `web-gobuster-discovery` → `smb-guest-creds` → `web-auth-shell-access` → `service-config-creds` → `ssh-creds-foothold` | `python-library-hijack-privesc` | `--to-user 5 --to-root 1` |
+| **SwagShop** | `web-gobuster-discovery` → `magento-admin-creds` → `web-upload-foothold` | `sudo-wrapper-privesc` (`vi`) | `--to-user 3 --to-root 1` |
+| **Networked** | `web-gobuster-discovery` → `web-shell-access` → `cron-pivot-foothold` | `ifcfg-privesc` | `--to-user 3 --to-root 1` |
+| **Haystack** | `elasticsearch-creds` → `ssh-creds-foothold` | `kibana-lfi-pivot` → `logstash-privesc` | `--to-user 2 --to-root 2` |
+| **Writeup** | `web-gobuster-discovery` → `cmsms-sqli-creds` → `ssh-creds-foothold` | `run-parts-privesc` | `--to-user 3 --to-root 1` |
+| **Postman** | `redis-key-foothold` → `cracked-key-creds` → `ssh-creds-foothold` | `webmin-privesc` | `--to-user 3 --to-root 1` |
+| **Traverxec** | `web-gobuster-discovery` → `web-shell-access` → `htpasswd-creds` → `ssh-creds-foothold` | `sudo-wrapper-privesc` (`journalctl`) | `--to-user 4 --to-root 1` |
+| **OpenAdmin** | `web-gobuster-discovery` → `opennetadmin-rce-foothold` → `opennetadmin-db-creds` → `internal-site-pivot` | `sudo-wrapper-privesc` (`nano`) | `--to-user 4 --to-root 1` |
+
+The two batches now cover twenty Linux machines from the easy catalogue. Every
+login/access step uses separate `creds.uname` and `creds.pass` facts, and every
+user-yielding step provides both `access_shell` and `user_shell`; root steps
+consume `user_shell` so they run as the actual user principal rather than an
+earlier service account.

@@ -1,0 +1,26 @@
+id: service-config-creds
+version: 1.0.0
+kind: creds
+description: "Read a database configuration file for reusable service credentials."
+os: ["ubuntu-*", "debian-*"]
+difficulty: 2
+provision: ./provision.sh
+poc:
+  context: target
+  container: ./poc.sh
+actor: $u
+requires:
+  - access_shell($u)
+provides:
+  - creds.uname($db_user)
+  - creds.pass($db_pass)
+params:
+
+  db_user:
+    type: username
+  db_pass:
+    type: password
+    length: 14
+walkthrough: |
+  The web configuration exposes a database login: `{db_user}` /
+          `{db_pass}`. The same password is reused for the system account.

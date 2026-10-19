@@ -10,7 +10,7 @@ poc:
   container: ./poc.sh
 actor: $u
 requires:
-  - access_shell($u)
+  - user_shell($u)
 provides:
   - knows(cron, writable)
 walkthrough: |
