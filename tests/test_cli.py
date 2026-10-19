@@ -78,3 +78,8 @@ def test_attestation_requires_recipe_mode(capsys):
 def test_attestation_dir_requires_key(capsys):
     assert main(["verify", "--recipe", "x", "--attestation-dir", "a"]) == 2
     assert "requires --attest-key" in capsys.readouterr().err
+
+
+def test_sandbox_isolated_is_qemu_only(capsys):
+    assert main(["verify", "--backend", "docker", "--sandbox", "isolated", "--recipe", "x"]) == 2
+    assert "QEMU-only" in capsys.readouterr().err

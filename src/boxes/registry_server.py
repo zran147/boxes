@@ -68,8 +68,11 @@ def publish(
         ):
             raise PublishError("bundle metadata does not match the request")
 
-        attestation = payload.get("attestation")
-        if attestation is not None:
+        raw_attestations = payload.get("attestations")
+        if raw_attestations is None and payload.get("attestation") is not None:
+            raw_attestations = [payload["attestation"]]
+        attestations = list(raw_attestations or [])
+        for attestation in attestations:
             ok, error = attest.verify(attestation)
             if not ok:
                 raise PublishError(f"attestation: {error}", status=403)
@@ -94,8 +97,8 @@ def publish(
         if not recipe.verifiable:
             errors.append(f"{recipe.id}: registry recipes need provision+poc")
         os_name = None
-        if attestation is not None:
-            os_name = attestation.get("os")
+        if attestations:
+            os_name = attestations[0].get("os")
         checked = check_recipe(recipe, os_name=os_name)
         errors.extend(checked.errors)
         if errors:
@@ -119,9 +122,13 @@ def publish(
             raise PublishError("existing index was not signed by this operator key", 403)
         sequence = int(index.get("sequence", 0)) + 1
         entries = list(index.get("recipes", []))
+        revoked_publishers = list(index.get("revoked_publishers", []))
+        revoked_bundles = list(index.get("revoked_bundles", []))
     else:
         sequence = 1
         entries = []
+        revoked_publishers = []
+        revoked_bundles = []
 
     new_entry = {
         "id": recipe.id,
@@ -132,7 +139,8 @@ def publish(
         "bundle": digest,
         "bundle_signature": signature,
         "files": manifest["files"],
-        "attestation": attestation,
+        "attestations": attestations,
+        "attestation": attestations[0] if attestations else None,
         "bundle_url": f"bundles/{digest}.tar.gz",
         "tar_sha256": hashlib.sha256(data).hexdigest(),
         "size": len(data),
@@ -156,7 +164,8 @@ def publish(
                 status=409,
             )
         for entry in same:
-            entry["attestation"] = attestation
+            entry["attestations"] = attestations
+            entry["attestation"] = attestations[0] if attestations else None
     else:
         entries.append(new_entry)
     entries.sort(key=lambda entry: (entry["id"], registry_client._version_key(entry["version"])))
@@ -165,6 +174,9 @@ def publish(
         "schema": registry_client.REGISTRY_SCHEMA,
         "sequence": sequence,
         "generated_at": registry_client._now(),
+        "expires_at": registry_client._expiry(),
+        "revoked_publishers": revoked_publishers,
+        "revoked_bundles": revoked_bundles,
         "operator": signing.fingerprint(operator_public),
         "recipes": entries,
     }

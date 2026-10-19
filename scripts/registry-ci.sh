@@ -13,7 +13,7 @@ registry_dir=${2:?registry dir}
 publisher=${3:?publisher}
 key=${4:?private key}
 operator=${5:-$key}
-os=${6:-ubuntu-22.04}
+oses=${6:-ubuntu-22.04}
 att_dir=${7:-attestations}
 
 root=$(dirname "$recipe_dir")
@@ -29,12 +29,15 @@ boxes --recipes "$root" lint
 echo "== harness: $recipe_id =="
 boxes --recipes "$root" test-recipe "$recipe_id"
 
-echo "== locked verification: $recipe_id ($os) =="
-boxes --recipes "$root" verify --recipe "$recipe_id" --os "$os" \
-    --backend docker --sandbox locked --no-cache \
-    --attest-key "$key" --attestation-dir "$att_dir"
-
-attestation="$att_dir/$recipe_id-$version.json"
+attestations=()
+for os in $oses; do
+    echo "== locked verification: $recipe_id ($os) =="
+    boxes --recipes "$root" verify --recipe "$recipe_id" --os "$os" \
+        --backend docker --sandbox locked --no-cache \
+        --attest-key "$key" --attestation-dir "$att_dir"
+    attestations+=(--attestation \
+        "$att_dir/$recipe_id-$version-$os-container-locked.json")
+done
 
 echo "== publish =="
 boxes registry publish "$recipe_dir" \
@@ -42,4 +45,4 @@ boxes registry publish "$recipe_dir" \
     --publisher "$publisher" \
     --key "$key" \
     --operator-key "$operator" \
-    --attestation "$attestation"
+    "${attestations[@]}"

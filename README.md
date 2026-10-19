@@ -19,9 +19,11 @@ Status: **P0–P4 done.** Numeric recipe difficulty (1–10), typed
 parameters/usernames, the manifest-driven attacker toolkit, the Ubuntu
 22.04/24.04 + Debian 12 matrix, and Docker acceptance are done. The signed
 registry (static and HTTP API), Ed25519 trust, lockfile, locked Docker sandbox,
-signed verification attestations, and per-recipe CI are implemented. Follow-ups
-to P4: a dedicated isolated QEMU worker, a multi-OS CI matrix, and key
-rotation/TUF-style metadata. Themes remain deferred (>50 recipes).
+signed verification attestations, and per-recipe CI are implemented, along
+with multi-OS attestations, index expiry/revocation, operator-key rotation,
+and an isolated target-only QEMU profile. Follow-ups to P4: a dedicated
+hardware-isolated QEMU worker and TUF-style root/timestamp/transparency
+metadata. Themes remain deferred (>50 recipes).
 
 ## Quick start
 
@@ -634,6 +636,12 @@ boxes registry install my-recipe
 boxes registry update
 boxes registry verify
 boxes registry uninstall my-recipe
+
+# revocation / rotation
+boxes registry revoke --registry-dir /srv/boxes-registry \
+    --operator-key operator.key --publisher <fingerprint>
+boxes registry rotate --registry-dir /srv/boxes-registry \
+    --old-key operator.key --new-key next.key
 ```
 
 - Config: `~/.config/boxes/registries.json` (override with `BOXES_CONFIG_FILE`
@@ -665,8 +673,19 @@ needed for user creation/services/low ports/setuid simulation, applies file,
 pids, memory, and CPU limits, and gives the attacker `no-new-privileges`.
 The target intentionally keeps setuid semantics so sudo/SUID recipes remain
 testable; the container is the boundary. First-party recipes in `recipes/`
-remain the trusted local tier. An isolated worker/QEMU sandbox is the next
-step for stronger untrusted isolation.
+remain the trusted local tier.
+
+For VM-only target-context recipes, an isolated QEMU profile is available:
+
+```bash
+boxes verify --recipe reg-vm --backend qemu --sandbox isolated \
+    --allow-untrusted --no-cache
+```
+
+It uses no root helper, attacker tap, or provisioning NIC, and refuses
+attacker-context recipes; apt-installing recipes will fail because there is no
+provisioning network. Run it on a dedicated/disposable worker; a
+hardware-isolated worker remains a deployment follow-up.
 
 ### Attestations and per-recipe CI
 
@@ -686,18 +705,21 @@ Publish it with the recipe:
 boxes registry publish recipes/my-recipe \
     --registry-dir /srv/boxes-registry \
     --publisher me --key keys/publisher.key \
-    --attestation attestations/my-recipe-1.0.0.json
+    --attestation attestations/my-recipe-1.0.0-ubuntu-22.04-container-locked.json
 ```
 
-`boxes registry install` stores the attestation in the lock; `boxes registry
-verify` re-verifies it and prints `(attested)`. The per-recipe CI pipeline is:
+`boxes registry install` stores the attestations in the lock; `boxes registry
+verify` re-verifies each and prints `(attested)`. Pass `--attestation` multiple
+times for a multi-OS matrix; the CI script accepts a space-separated OS list:
 
 ```bash
-scripts/registry-ci.sh RECIPE_DIR REGISTRY_DIR PUBLISHER PRIVATE_KEY
+scripts/registry-ci.sh RECIPE_DIR REGISTRY_DIR PUBLISHER PRIVATE_KEY \
+    OPERATOR_KEY "ubuntu-22.04 debian-12 ubuntu-24.04"
 ```
 
-It runs lint, the harness, locked verification, signs an attestation, and
-publishes the bundle. Run `boxes proxy up` first.
+It runs lint, the harness, locked verification for each OS, signs one
+attestation per OS, and publishes the bundle with all of them. Run
+`boxes proxy up` first.
 
 ### Serving a registry (HTTP API)
 
@@ -720,7 +742,7 @@ symbolic lint/harness preflight. Publish through it with:
 
 ```bash
 boxes registry publish recipes/my-recipe --url http://127.0.0.1:8000 \
-    --publisher me --key publisher.key --attestation attestations/my-recipe-1.0.0.json
+    --publisher me --key publisher.key --attestation attestations/my-recipe-1.0.0-ubuntu-22.04-container-locked.json
 ```
 
 Attestations can be required client-side:
@@ -741,4 +763,4 @@ hardening follow-ups; untrusted QEMU verification stays refused.
 | **P1** — container fast path | Pluggable backend, target + attacker images, internal network, shared attacker container, provision/poc contract, assets, L2 + L3 verification, content-addressed cache, parallel jobs, real recipes | **Done** |
 | **P2** — fidelity + branching | QEMU (KVM auto/TCG fallback) + prebaked base + snapshots; one PoC per recipe (`poc.container` XOR `poc.vm`); pre-PoC snapshot/restore; shared-prefix DAG with one-VM verification and attacker reset; hybrid provisioning proxy (durable apt cache + squid + artifact store) with egress-only phase and seal; apt snapshot pinning; VM base checksum/resume/store overrides; proxy health/cleanup | **Done** |
 | **P3** — coherence + scale | Numeric difficulty 1–10 (machine = hardest recipe; separate user/root; provisional easy/medium/hard CLI bands; length/shape separate); typed params and human-looking usernames; weighted choices; manifest-driven attacker toolkit with lint/check; Ubuntu 22.04/24.04 + Debian 12 Docker (13/13 each); QEMU profiles, per-OS stores, and verified VM chains on all three; Docker integration matrix and acceptance script. Themes deferred until the catalogue is large enough (>50 recipes); planner-scale tuning as it grows. | **Done** |
-| **P4** — registry | Signed static registry and HTTP API, deterministic content-addressed bundles, Ed25519 operator/publisher signatures, rollback protection, lockfile, install/update/verify, untrusted-tier guard, locked Docker sandbox, signed verification attestations with require-attestation policy, per-recipe CI, static/read-write server. Follow-ups: isolated QEMU worker, multi-OS CI matrix, key rotation/TUF. | **Done** |
+| **P4** — registry | Signed static registry and HTTP API, deterministic content-addressed bundles, Ed25519 operator/publisher signatures, rollback protection, lockfile, install/update/verify, untrusted-tier guard, locked Docker sandbox, isolated target-only QEMU profile, signed multi-OS verification attestations with require-attestation policy, per-recipe CI, static/read-write server, index expiry/revocation, operator key rotation. Follow-ups: dedicated hardware-isolated QEMU worker, TUF-style root/timestamp/transparency metadata. | **Done** |

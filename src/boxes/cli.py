@@ -70,13 +70,24 @@ def _untrusted_check(args, recipes) -> bool:
     if not untrusted:
         return True
     if args.backend == "qemu":
-        print(
-            "refusing QEMU verification of untrusted registry recipes: "
-            + ", ".join(untrusted)
-            + ". The VM sandbox milestone is not implemented yet; use --backend docker.",
-            file=sys.stderr,
-        )
-        return False
+        if getattr(args, "sandbox", None) != "isolated":
+            print(
+                "untrusted QEMU verification requires --sandbox isolated on a "
+                "dedicated worker; refusing: " + ", ".join(untrusted),
+                file=sys.stderr,
+            )
+            return False
+        attacker = [
+            r.id for r in recipes
+            if getattr(r, "poc_context", "target") == "attacker"
+        ]
+        if attacker:
+            print(
+                "isolated QEMU cannot run attacker-context recipes: "
+                + ", ".join(attacker),
+                file=sys.stderr,
+            )
+            return False
     if getattr(args, "sandbox", None) == "trusted":
         print(
             "untrusted registry recipes require the locked Docker sandbox: "
@@ -89,13 +100,14 @@ def _untrusted_check(args, recipes) -> bool:
         print(
             "untrusted registry recipes: "
             + ", ".join(untrusted)
-            + ". Pass --allow-untrusted to run them in the locked Docker sandbox.",
+            + ". Pass --allow-untrusted to run them in the selected sandbox.",
             file=sys.stderr,
         )
         return False
+    where = "isolated QEMU" if args.backend == "qemu" else "locked Docker sandbox"
     print(
-        "warning: running untrusted registry recipes in the locked Docker sandbox; "
-        "the isolated worker/attestation milestone is next: " + ", ".join(untrusted),
+        f"warning: running untrusted registry recipes in the {where}: "
+        + ", ".join(untrusted),
         file=sys.stderr,
     )
     return True
@@ -307,7 +319,10 @@ def _prepare_backend(args):
         except ValueError as e:
             print(str(e), file=sys.stderr)
             return None
-        backend = get_backend("qemu", accel=selected, os_name=args.os)
+        backend = get_backend(
+            "qemu", accel=selected, os_name=args.os,
+            sandbox=getattr(args, "sandbox", None) or "trusted",
+        )
     else:
         if args.backend == "docker":
             sandbox = getattr(args, "sandbox", None)
@@ -458,6 +473,9 @@ def cmd_verify(args) -> int:
             f"unsupported VM OS {args.os}; supported: {', '.join(SUPPORTED_OS)}",
             file=sys.stderr,
         )
+        return 2
+    if args.backend == "docker" and getattr(args, "sandbox", None) == "isolated":
+        print("--sandbox isolated is QEMU-only", file=sys.stderr)
         return 2
     from . import proxy as proxy_mod
 
@@ -682,7 +700,8 @@ def cmd_registry(args) -> int:
         if args.registry_command == "add":
             reg = registry_client.add_registry(args.name, args.url, args.key)
             print(f"added {args.name}: {reg['url']}")
-            print(f"operator fingerprint: {reg['operator_fingerprint']}")
+            for key in reg.get("operator_keys", []):
+                print(f"operator fingerprint: {key['fingerprint']}")
             print(f"index sequence: {reg['sequence']}")
             return 0
         if args.registry_command == "remove":
@@ -782,6 +801,20 @@ def cmd_registry(args) -> int:
                 )
             except KeyboardInterrupt:
                 pass
+            return 0
+        if args.registry_command == "revoke":
+            index = registry_client.revoke(
+                args.registry_dir, args.operator_key,
+                publisher=args.publisher, bundle=args.bundle,
+            )
+            print(f"revoked; index sequence: {index['sequence']}")
+            return 0
+        if args.registry_command == "rotate":
+            index = registry_client.rotate(
+                args.registry_dir, args.old_key, args.new_key
+            )
+            print(f"rotated; index sequence: {index['sequence']}")
+            print(f"new operator: {index['operator']}")
             return 0
         if args.registry_command == "publish":
             if bool(args.url) == bool(args.registry_dir):
@@ -940,8 +973,8 @@ def build_parser() -> argparse.ArgumentParser:
     v.add_argument("--keep", action="store_true", help="keep the container for debugging")
     v.add_argument("--allow-untrusted", action="store_true", dest="allow_untrusted",
                    help="run registry-installed recipes in the locked Docker sandbox (QEMU is refused)")
-    v.add_argument("--sandbox", choices=["trusted", "locked"], default=None,
-                   help="Docker sandbox profile; untrusted recipes require locked")
+    v.add_argument("--sandbox", choices=["trusted", "locked", "isolated"], default=None,
+                   help="Docker locked profile or isolated QEMU (target-context only)")
     v.add_argument("--attest-key", default=None, dest="attest_key",
                    help="sign a per-recipe verification attestation with this private key")
     v.add_argument("--attestation-dir", default=None, dest="attestation_dir",
@@ -1006,7 +1039,8 @@ def build_parser() -> argparse.ArgumentParser:
     ra = rg_sub.add_parser("add", help="add and trust a signed static registry")
     ra.add_argument("name")
     ra.add_argument("url", help="registry directory or http(s) URL")
-    ra.add_argument("--key", required=True, help="registry operator public key")
+    ra.add_argument("--key", required=True, action="append",
+                    help="registry operator public key (repeatable for rotation)")
     ra.set_defaults(func=cmd_registry)
 
     rr = rg_sub.add_parser("remove", help="remove a registry configuration")
@@ -1050,8 +1084,8 @@ def build_parser() -> argparse.ArgumentParser:
     rp.add_argument("--key", required=True, help="publisher private key")
     rp.add_argument("--operator-key", default=None, dest="operator_key",
                     help="operator private key (defaults to --key)")
-    rp.add_argument("--attestation", default=None,
-                    help="signed verification attestation JSON")
+    rp.add_argument("--attestation", action="append", default=None,
+                    help="signed verification attestation JSON (repeatable)")
     rp.set_defaults(func=cmd_registry)
 
     rv = rg_sub.add_parser("serve", help="serve a static registry over HTTP")
@@ -1064,6 +1098,19 @@ def build_parser() -> argparse.ArgumentParser:
                     dest="trust_publisher",
                     help="public key allowed to publish (repeatable)")
     rv.set_defaults(func=cmd_registry)
+
+    rr = rg_sub.add_parser("revoke", help="revoke a publisher key or bundle")
+    rr.add_argument("--registry-dir", required=True, dest="registry_dir")
+    rr.add_argument("--operator-key", required=True, dest="operator_key")
+    rr.add_argument("--publisher", default=None, help="publisher key fingerprint")
+    rr.add_argument("--bundle", default=None, help="bundle SHA-256")
+    rr.set_defaults(func=cmd_registry)
+
+    rt = rg_sub.add_parser("rotate", help="rotate the registry operator key")
+    rt.add_argument("--registry-dir", required=True, dest="registry_dir")
+    rt.add_argument("--old-key", required=True, dest="old_key")
+    rt.add_argument("--new-key", required=True, dest="new_key")
+    rt.set_defaults(func=cmd_registry)
 
     return p
 

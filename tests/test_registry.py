@@ -150,13 +150,18 @@ def test_untrusted_guard(reg, capsys):
 
     args.backend = "qemu"
     assert not _untrusted_check(args, [recipe])
-    assert "refusing QEMU" in capsys.readouterr().err
+    assert "requires --sandbox isolated" in capsys.readouterr().err
 
     args.backend = "docker"
     args.allow_untrusted = True
     args.sandbox = "trusted"
     assert not _untrusted_check(args, [recipe])
     assert "require the locked" in capsys.readouterr().err
+
+    args.backend = "qemu"
+    args.sandbox = "isolated"
+    assert not _untrusted_check(args, [recipe])
+    assert "attacker-context" in capsys.readouterr().err
 
 
 def test_signing_roundtrip(tmp_path):
@@ -191,7 +196,7 @@ def test_publish_and_install_with_attestation(reg, tmp_path):
     entry = registry_client.install("reg-test")
     assert entry["attestation"]["result"] == "pass"
     lock = registry_client.load_lock()
-    assert lock["recipes"][0]["attestation"]
+    assert lock["recipes"][0]["attestations"]
     checked = registry_client.verify_installed()
     assert checked[0]["errors"] == []
     assert checked[0]["attested"] is True
@@ -223,3 +228,85 @@ def test_attestation_must_match_bundle(reg, tmp_path):
 def test_require_attestation(reg):
     with pytest.raises(registry_client.RegistryError, match="no attestation"):
         registry_client.install("reg-test", require_attestation=True)
+
+
+def test_multi_os_attestations(reg, tmp_path):
+    from boxes import attest
+    from boxes.recipe import load_recipe
+    from boxes.runner import StepResult, VerifyResult
+
+    recipe = load_recipe(reg.source / "recipe.yaml")
+    paths = []
+    for os_name in ("ubuntu-22.04", "debian-12"):
+        result = VerifyResult(label=recipe.id)
+        result.add(StepResult(recipe.id, "provision", True, 0, ""))
+        result.add(StepResult(recipe.id, "poc", True, 0, ""))
+        body = attest.build(
+            recipe, result, image_id=f"img-{os_name}", os_name=os_name,
+            backend="container", sandbox="locked",
+            started_at="a", finished_at="b",
+        )
+        paths.append(
+            attest.write(attest.sign(body, reg.keys["private"]), tmp_path / "att")
+        )
+    registry_client.publish(
+        reg.source, reg.registry, "tester", reg.keys["private"],
+        attestation_path=paths,
+    )
+    entry = registry_client.install("reg-test")
+    assert len(entry["attestations"]) == 2
+    assert len(registry_client.load_lock()["recipes"][0]["attestations"]) == 2
+    checked = registry_client.verify_installed()
+    assert checked[0]["errors"] == []
+    assert checked[0]["attested"] is True
+
+
+def test_expired_index_is_rejected(reg):
+    from boxes import signing
+
+    index_path = reg.registry / "index.json"
+    index = json.loads(index_path.read_text())
+    index.pop("signature")
+    index["expires_at"] = "2000-01-01T00:00:00+00:00"
+    index["signature"] = signing.sign_json(
+        signing.load_private(reg.keys["private"]), index
+    )
+    index_path.write_text(json.dumps(index))
+
+    with pytest.raises(registry_client.RegistryError, match="expired"):
+        registry_client.search("reg-test")
+    with pytest.raises(registry_client.RegistryError, match="expired"):
+        registry_client.install("reg-test")
+
+
+def test_revoked_publisher_is_rejected(reg):
+    entry = registry_client.install("reg-test")
+    registry_client.revoke(
+        reg.registry, reg.keys["private"],
+        publisher=entry["publisher_fingerprint"],
+    )
+    assert registry_client.search("reg-test") == []
+    with pytest.raises(registry_client.RegistryError, match="revoked"):
+        registry_client.install("reg-test")
+    checked = registry_client.verify_installed()
+    assert checked and any("revoked" in error for error in checked[0]["errors"])
+
+
+def test_operator_key_rotation(reg):
+    from boxes import signing
+
+    new = signing.keygen(reg.tmp_path / "keys" / "new")
+    registry_client.add_registry(
+        "test", reg.registry, [reg.keys["public"], new["public"]]
+    )
+    registry_client.rotate(reg.registry, reg.keys["private"], new["private"])
+
+    # The config trusts both keys; the new index is signed by the new key.
+    assert registry_client.search("reg-test")[0]["id"] == "reg-test"
+    entry = registry_client.install("reg-test")
+    assert entry["id"] == "reg-test"
+    lock = registry_client.load_lock()
+    assert lock["registries"]["test"]["operator_fingerprint"] == signing.fingerprint(
+        signing.load_public(new["public"])
+    )
+    assert registry_client.verify_installed()[0]["errors"] == []

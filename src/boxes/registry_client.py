@@ -13,7 +13,7 @@ import os
 import shutil
 import tempfile
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import attest
@@ -43,6 +43,7 @@ from .signing import (
 
 MAX_REF = 64 * 1024 * 1024
 REGISTRY_SCHEMA = 1
+INDEX_TTL_DAYS = 90
 
 
 class RegistryError(RuntimeError):
@@ -75,6 +76,29 @@ def _now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
+def _expiry() -> str:
+    return (
+        datetime.now(timezone.utc) + timedelta(days=INDEX_TTL_DAYS)
+    ).replace(microsecond=0).isoformat()
+
+
+def _operator_keys(registry: dict) -> list[dict]:
+    keys = registry.get("operator_keys")
+    if keys:
+        return list(keys)
+    return [{
+        "key": registry["operator_key"],
+        "fingerprint": registry["operator_fingerprint"],
+    }]
+
+
+def _is_revoked(entry: dict, index: dict) -> bool:
+    return (
+        entry.get("publisher_fingerprint") in index.get("revoked_publishers", [])
+        or entry.get("bundle") in index.get("revoked_bundles", [])
+    )
+
+
 def _read_json(path: Path, default):
     if not path.is_file():
         return default
@@ -97,7 +121,8 @@ def _write_json(path: Path, value) -> None:
             os.unlink(tmp)
 
 
-def _normalize_url(url: str) -> str:
+def _normalize_url(url: str | Path) -> str:
+    url = str(url)
     if url.startswith(("http://", "https://")):
         return url.rstrip("/")
     if url.startswith("file://"):
@@ -150,13 +175,25 @@ def save_lock(data: dict) -> None:
     _write_json(lockfile(), data)
 
 
-def add_registry(name: str, url: str, key_path: str | Path) -> dict:
-    public = load_public(key_path)
-    pem = public_pem(public)
+def add_registry(
+    name: str, url: str | Path, key_paths: str | Path | list[str | Path]
+) -> dict:
+    if isinstance(key_paths, (str, Path)):
+        key_paths = [key_paths]
+    keys = []
+    for key_path in key_paths:
+        public = load_public(key_path)
+        keys.append({
+            "key": public_pem(public),
+            "fingerprint": fingerprint(public),
+        })
+    if not keys:
+        raise RegistryError("at least one operator key is required")
     reg = {
         "url": _normalize_url(url),
-        "operator_key": pem,
-        "operator_fingerprint": fingerprint(public),
+        "operator_keys": keys,
+        "operator_key": keys[0]["key"],
+        "operator_fingerprint": keys[0]["fingerprint"],
         "sequence": 0,
     }
     index = fetch_index(reg)
@@ -213,11 +250,34 @@ def fetch_index(registry: dict, floor: int | None = None) -> dict:
         raise RegistryError("registry index is unsigned")
     body = dict(index)
     body.pop("signature", None)
-    public = public_from_pem(registry["operator_key"])
-    if fingerprint(public) != registry.get("operator_fingerprint"):
-        raise RegistryError("registry operator key fingerprint changed")
-    if not verify_json(public, body, signature):
-        raise RegistryError("registry index signature is invalid")
+    matched = None
+    for item in _operator_keys(registry):
+        try:
+            public = public_from_pem(item["key"])
+        except Exception:  # noqa: BLE001 - skip a malformed configured key
+            continue
+        if fingerprint(public) != item.get("fingerprint"):
+            continue
+        if verify_json(public, body, signature):
+            matched = item
+            break
+    if matched is None:
+        raise RegistryError("registry index signature is invalid for trusted operator keys")
+    if index.get("operator") and index["operator"] != matched["fingerprint"]:
+        raise RegistryError("registry index operator fingerprint mismatch")
+    if index.get("expires_at"):
+        try:
+            expires = datetime.fromisoformat(index["expires_at"])
+        except ValueError as e:
+            raise RegistryError(f"invalid index expiry: {e}") from e
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=timezone.utc)
+        if expires < datetime.now(timezone.utc):
+            raise RegistryError(f"registry index expired at {index['expires_at']}")
+    for key in ("revoked_publishers", "revoked_bundles"):
+        value = index.get(key, [])
+        if not isinstance(value, list):
+            raise RegistryError(f"registry index {key} must be a list")
     sequence = int(index.get("sequence", 0))
     if floor is not None and sequence < floor:
         raise RegistryError(
@@ -270,17 +330,28 @@ def resolve(index: dict, spec: str) -> dict:
         rid, version = spec.rsplit("@", 1)
     else:
         rid, version = spec, None
-    candidates = [entry for entry in index["recipes"] if entry.get("id") == rid]
+    candidates = [
+        entry for entry in index["recipes"]
+        if entry.get("id") == rid and not _is_revoked(entry, index)
+    ]
     if version is not None:
         candidates = [entry for entry in candidates if entry.get("version") == version]
     if not candidates:
-        raise RegistryError(f"no recipe {spec!r} in registry")
+        raise RegistryError(f"no recipe {spec!r} in registry (or it is revoked)")
     if version is None:
         top = max(candidates, key=lambda entry: _version_key(entry.get("version", "0")))
         candidates = [entry for entry in candidates if entry.get("version") == top["version"]]
     if len(candidates) != 1:
         raise RegistryError(f"recipe {spec!r} is ambiguous ({len(candidates)} entries)")
     return candidates[0]
+
+
+def entry_attestations(entry: dict) -> list[dict]:
+    attestations = entry.get("attestations")
+    if attestations is not None:
+        return list(attestations)
+    single = entry.get("attestation")
+    return [single] if single else []
 
 
 def _entry_manifest(entry: dict) -> dict:
@@ -316,7 +387,7 @@ def install(
     _remember_sequence(name, index)
     entry = resolve(index, spec)
     _verify_entry(entry)
-    if require_attestation and not entry.get("attestation"):
+    if require_attestation and not entry_attestations(entry):
         raise RegistryError(f"{entry['id']}@{entry['version']} has no attestation")
 
     installed = registry_recipes() / entry["id"]
@@ -377,13 +448,19 @@ def install(
         "publisher_fingerprint": entry["publisher_fingerprint"],
         "bundle_signature": entry["bundle_signature"],
         "files": entry["files"],
-        "attestation": entry.get("attestation"),
+        "attestations": entry_attestations(entry),
         "installed_at": _now(),
     })
+    keys = _operator_keys(reg)
+    matched = next(
+        (key for key in keys if key["fingerprint"] == index.get("operator")),
+        keys[0],
+    )
     lock["registries"][name] = {
         "url": reg["url"],
-        "operator_key": reg["operator_key"],
-        "operator_fingerprint": reg["operator_fingerprint"],
+        "operator_key": matched["key"],
+        "operator_keys": keys,
+        "operator_fingerprint": matched["fingerprint"],
         "sequence": int(index["sequence"]),
     }
     save_lock(lock)
@@ -458,22 +535,22 @@ def verify_installed(offline: bool = False) -> list[dict]:
             _verify_entry(item)
         except RegistryError as e:
             errors.append(str(e))
-        attestation = item.get("attestation")
-        if attestation:
+        attestations = entry_attestations(item)
+        for attestation in attestations:
             ok, error = attest.verify(attestation)
             if not ok:
                 errors.append(f"attestation: {error}")
-            else:
-                if attestation.get("signer_fingerprint") != item.get("publisher_fingerprint"):
-                    errors.append("attestation signer is not the publisher")
-                if attestation.get("recipe") != item["id"]:
-                    errors.append("attestation recipe mismatch")
-                if attestation.get("version") != item["version"]:
-                    errors.append("attestation version mismatch")
-                if attestation.get("files") != item.get("files"):
-                    errors.append("attestation files mismatch")
-                if attestation.get("result") != "pass":
-                    errors.append("attestation is not a pass")
+                continue
+            if attestation.get("signer_fingerprint") != item.get("publisher_fingerprint"):
+                errors.append("attestation signer is not the publisher")
+            if attestation.get("recipe") != item["id"]:
+                errors.append("attestation recipe mismatch")
+            if attestation.get("version") != item["version"]:
+                errors.append("attestation version mismatch")
+            if attestation.get("files") != item.get("files"):
+                errors.append("attestation files mismatch")
+            if attestation.get("result") != "pass":
+                errors.append("attestation is not a pass")
 
         if not offline:
             try:
@@ -486,6 +563,8 @@ def verify_installed(offline: bool = False) -> list[dict]:
                     and entry.get("version") == item["version"]
                     and entry.get("bundle") == item["bundle"]
                 ]
+                if _is_revoked(item, index):
+                    errors.append("bundle is revoked")
                 if not entries:
                     errors.append("recipe is no longer present in the registry index")
                 else:
@@ -498,14 +577,14 @@ def verify_installed(offline: bool = False) -> list[dict]:
                             errors.append(f"registry index {field} differs from the lock")
                     if indexed.get("files") != item.get("files"):
                         errors.append("registry index file hashes differ from the lock")
-                    if indexed.get("attestation") != item.get("attestation"):
-                        errors.append("registry index attestation differs from the lock")
+                    if indexed.get("attestations") != item.get("attestations"):
+                        errors.append("registry index attestations differ from the lock")
             except RegistryError as e:
                 errors.append(str(e))
         results.append({
             "id": item["id"],
             "version": item["version"],
-            "attested": bool(item.get("attestation")),
+            "attested": bool(entry_attestations(item)),
             "errors": errors,
         })
     return results
@@ -520,7 +599,7 @@ def publish(
     publisher: str,
     private_key: str | Path,
     operator_key: str | Path | None = None,
-    attestation_path: str | Path | None = None,
+    attestation_path: str | Path | list[str | Path] | None = None,
 ) -> dict:
     recipe_dir = Path(recipe_dir)
     out = Path(registry_dir)
@@ -549,9 +628,13 @@ def publish(
             raise RegistryError("existing index was not signed by this operator key")
         sequence = int(existing.get("sequence", 0)) + 1
         entries = list(existing.get("recipes", []))
+        revoked_publishers = list(existing.get("revoked_publishers", []))
+        revoked_bundles = list(existing.get("revoked_bundles", []))
     else:
         sequence = 1
         entries = []
+        revoked_publishers = []
+        revoked_bundles = []
 
     with tempfile.TemporaryDirectory(dir=str(out)) as tmp:
         tar_path = Path(tmp) / "bundle.tar.gz"
@@ -560,23 +643,30 @@ def publish(
         target.write_bytes(tar_path.read_bytes())
     size = target.stat().st_size
 
-    attestation = None
-    if attestation_path is not None:
+    if attestation_path is None:
+        attestation_paths = []
+    elif isinstance(attestation_path, (str, Path)):
+        attestation_paths = [attestation_path]
+    else:
+        attestation_paths = list(attestation_path)
+    attestations: list[dict] = []
+    for path in attestation_paths:
         try:
-            attestation = json.loads(Path(attestation_path).read_text())
+            value = json.loads(Path(path).read_text())
         except (OSError, json.JSONDecodeError) as e:
             raise RegistryError(f"cannot read attestation: {e}") from e
-        ok, error = attest.verify(attestation)
+        ok, error = attest.verify(value)
         if not ok:
             raise RegistryError(f"attestation: {error}")
-        if attestation.get("signer_fingerprint") != fingerprint(publisher_public):
+        if value.get("signer_fingerprint") != fingerprint(publisher_public):
             raise RegistryError("attestation must be signed by the publisher key")
-        if attestation.get("recipe") != recipe.id or attestation.get("version") != recipe.version:
+        if value.get("recipe") != recipe.id or value.get("version") != recipe.version:
             raise RegistryError("attestation recipe/version does not match")
-        if attestation.get("files") != manifest["files"]:
+        if value.get("files") != manifest["files"]:
             raise RegistryError("attestation files do not match the bundle")
-        if attestation.get("result") != "pass":
+        if value.get("result") != "pass":
             raise RegistryError("attestation result is not pass")
+        attestations.append(value)
 
     same = [
         entry for entry in entries
@@ -588,9 +678,10 @@ def publish(
                 f"{recipe.id}@{recipe.version} already exists with different content; "
                 "bump the version"
             )
-        if attestation is not None:
+        if attestations:
             for entry in same:
-                entry["attestation"] = attestation
+                entry["attestations"] = attestations
+                entry["attestation"] = attestations[0]
     else:
         entries.append({
             "id": recipe.id,
@@ -601,7 +692,8 @@ def publish(
             "bundle": digest,
             "bundle_signature": sign(publisher_private, digest.encode("ascii")),
             "files": manifest["files"],
-            "attestation": attestation,
+            "attestations": attestations,
+            "attestation": attestations[0] if attestations else None,
             "bundle_url": f"bundles/{digest}.tar.gz",
             "tar_sha256": tar_sha,
             "size": size,
@@ -620,6 +712,9 @@ def publish(
         "schema": REGISTRY_SCHEMA,
         "sequence": sequence,
         "generated_at": _now(),
+        "expires_at": _expiry(),
+        "revoked_publishers": revoked_publishers,
+        "revoked_bundles": revoked_bundles,
         "operator": fingerprint(operator_public),
         "recipes": entries,
     }
@@ -633,7 +728,7 @@ def publish_api(
     recipe_dir: str | Path,
     publisher: str,
     private_key: str | Path,
-    attestation_path: str | Path | None = None,
+    attestation_path: str | Path | list[str | Path] | None = None,
 ) -> dict:
     import base64
     import urllib.error
@@ -648,10 +743,16 @@ def publish_api(
     if errors:
         raise RegistryError("recipe failed preflight: " + "; ".join(errors))
 
-    attestation = None
-    if attestation_path is not None:
+    if attestation_path is None:
+        attestation_paths = []
+    elif isinstance(attestation_path, (str, Path)):
+        attestation_paths = [attestation_path]
+    else:
+        attestation_paths = list(attestation_path)
+    attestations = []
+    for path in attestation_paths:
         try:
-            attestation = json.loads(Path(attestation_path).read_text())
+            attestations.append(json.loads(Path(path).read_text()))
         except (OSError, json.JSONDecodeError) as e:
             raise RegistryError(f"cannot read attestation: {e}") from e
 
@@ -667,7 +768,7 @@ def publish_api(
             "publisher_key": public_pem(public),
             "bundle": base64.b64encode(tar.read_bytes()).decode("ascii"),
             "signature": sign(private, digest.encode("ascii")),
-            "attestation": attestation,
+            "attestations": attestations,
         }
     request = urllib.request.Request(
         url.rstrip("/") + "/v1/publish",
@@ -688,6 +789,58 @@ def publish_api(
 # --- query ------------------------------------------------------------------
 
 
+def revoke(
+    registry_dir: str | Path,
+    operator_key: str | Path,
+    publisher: str | None = None,
+    bundle: str | None = None,
+) -> dict:
+    if not publisher and not bundle:
+        raise RegistryError("revoke needs a publisher fingerprint or bundle hash")
+    index_path = Path(registry_dir) / "index.json"
+    if not index_path.is_file():
+        raise RegistryError(f"no registry index at {index_path}")
+    index = json.loads(index_path.read_text())
+    signature = index.pop("signature", None)
+    operator_private = load_private(operator_key)
+    if not signature or not verify_json(operator_private.public_key(), index, signature):
+        raise RegistryError("index was not signed by this operator key")
+    if publisher and publisher not in index.setdefault("revoked_publishers", []):
+        index["revoked_publishers"].append(publisher)
+    if bundle and bundle not in index.setdefault("revoked_bundles", []):
+        index["revoked_bundles"].append(bundle)
+    index["sequence"] = int(index.get("sequence", 0)) + 1
+    index["generated_at"] = _now()
+    index["expires_at"] = _expiry()
+    index["operator"] = fingerprint(operator_private.public_key())
+    index["signature"] = sign_json(operator_private, index)
+    _write_json(index_path, index)
+    return index
+
+
+def rotate(
+    registry_dir: str | Path,
+    old_key: str | Path,
+    new_key: str | Path,
+) -> dict:
+    index_path = Path(registry_dir) / "index.json"
+    if not index_path.is_file():
+        raise RegistryError(f"no registry index at {index_path}")
+    index = json.loads(index_path.read_text())
+    signature = index.pop("signature", None)
+    old_private = load_private(old_key)
+    if not signature or not verify_json(old_private.public_key(), index, signature):
+        raise RegistryError("index was not signed by the old key")
+    new_private = load_private(new_key)
+    index["sequence"] = int(index.get("sequence", 0)) + 1
+    index["generated_at"] = _now()
+    index["expires_at"] = _expiry()
+    index["operator"] = fingerprint(new_private.public_key())
+    index["signature"] = sign_json(new_private, index)
+    _write_json(index_path, index)
+    return index
+
+
 def search(query: str, registry_name: str | None = None) -> list[dict]:
     name, reg = _get_registry(registry_name)
     index = fetch_index(reg, floor=_sequence_floor(name, reg))
@@ -704,7 +857,7 @@ def search(query: str, registry_name: str | None = None) -> list[dict]:
                 metadata.get("description", ""),
             )
         ).lower()
-        if needle not in haystack:
+        if needle not in haystack or _is_revoked(entry, index):
             continue
         current = latest.get(entry["id"])
         if current is None or _version_key(entry["version"]) > _version_key(current["version"]):

@@ -114,6 +114,10 @@ def verify(attestation: dict) -> tuple[bool, str | None]:
 def write(attestation: dict, directory: str | Path) -> Path:
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
-    path = directory / f"{attestation['recipe']}-{attestation['version']}.json"
+    name = "-".join(
+        str(attestation.get(key))
+        for key in ("recipe", "version", "os", "backend", "sandbox")
+    )
+    path = directory / f"{name}.json"
     path.write_text(canonical_json(attestation).decode("utf-8") + "\n")
     return path

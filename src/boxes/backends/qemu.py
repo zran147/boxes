@@ -51,6 +51,7 @@ class QemuBackend:
         user: str = "boxes",
         accel: str | None = None,
         os_name: str = DEFAULT_OS,
+        sandbox: str = "trusted",
     ) -> None:
         profile(os_name)  # validate
         self.os_name = os_name
@@ -58,6 +59,7 @@ class QemuBackend:
         self.base = Path(base or os.environ.get("BOXES_VM_BASE", self.store / "base-prebaked.qcow2"))
         self.key = Path(key) if key else self.store / "boxes_key"
         self.accel = accel_mod.resolve(accel)
+        self.sandbox = sandbox
         self.seed = self.store / "seed.iso"
         self.user = user
         self.run_dir = self.store / "run"

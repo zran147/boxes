@@ -221,8 +221,14 @@ def _setup(
     apt_snapshot: str | None = None,
 ) -> tuple[_Setup | None, str | None]:
     vm = _backend_fidelity(backend) == "vm"
+    isolated = getattr(backend, "sandbox", "trusted") == "isolated"
+    if vm and needs_attacker and isolated:
+        return None, (
+            "attacker-context PoCs are unavailable in isolated QEMU "
+            "(no attacker tap/root helper); use a target-context recipe"
+        )
     proxy_up = proxy_mod.is_up()
-    provision = proxy_up
+    provision = proxy_up and not isolated
     proxy_url = None
     apt_proxy_url = None
     if proxy_up:
