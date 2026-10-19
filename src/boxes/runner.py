@@ -103,6 +103,8 @@ def build_env(
 
 def resolve_actor(recipe: Recipe, ctx: dict) -> str:
     actor = recipe.actor or "attacker"
+    if not actor.strip():
+        raise ValueError(f"{recipe.id}: actor must not be empty")
     if actor.startswith("$"):
         key = actor[1:]
         if key not in ctx:

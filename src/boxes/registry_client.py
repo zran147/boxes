@@ -285,9 +285,12 @@ def fetch_index(registry: dict, floor: int | None = None) -> dict:
     if index.get("operator") and index["operator"] != matched["fingerprint"]:
         raise RegistryError("registry index operator fingerprint mismatch")
     if index.get("expires_at"):
+        expires_at = index["expires_at"]
+        if not isinstance(expires_at, str):
+            raise RegistryError("index expiry must be an ISO-8601 string")
         try:
-            expires = datetime.fromisoformat(index["expires_at"])
-        except ValueError as e:
+            expires = datetime.fromisoformat(expires_at)
+        except (TypeError, ValueError) as e:
             raise RegistryError(f"invalid index expiry: {e}") from e
         if expires.tzinfo is None:
             expires = expires.replace(tzinfo=timezone.utc)
@@ -297,7 +300,10 @@ def fetch_index(registry: dict, floor: int | None = None) -> dict:
         value = index.get(key, [])
         if not isinstance(value, list):
             raise RegistryError(f"registry index {key} must be a list")
-    sequence = int(index.get("sequence", 0))
+    try:
+        sequence = int(index.get("sequence", 0))
+    except (TypeError, ValueError) as e:
+        raise RegistryError(f"registry index has an invalid sequence: {e}") from e
     if floor is not None and sequence < floor:
         raise RegistryError(
             f"registry index rollback: got sequence {sequence}, expected >= {floor}"
@@ -367,7 +373,7 @@ def resolve(index: dict, spec: str) -> dict:
 
 def entry_attestations(entry: dict) -> list[dict]:
     attestations = entry.get("attestations")
-    if attestations is not None:
+    if attestations:
         return list(attestations)
     single = entry.get("attestation")
     return [single] if single else []

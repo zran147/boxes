@@ -187,6 +187,8 @@ class QemuBackend:
         return hashlib.sha1(name.encode()).hexdigest()[:8]
 
     def network_create(self, name: str, attacker_pid: int | None = None) -> ExecResult:
+        if self.sandbox == "isolated":
+            return ExecResult(1, "", "isolated QEMU cannot create an attacker network")
         if attacker_pid is None:
             return ExecResult(1, "", "VM attacker networking requires an attacker pid")
         boxes = os.environ.get("BOXES_BIN") or shutil.which("boxes")
@@ -227,6 +229,8 @@ class QemuBackend:
         return res
 
     def attach_attacker(self, network: str, attacker_pid: int) -> ExecResult:
+        if self.sandbox == "isolated":
+            return ExecResult(1, "", "isolated QEMU cannot attach an attacker")
         boxes = os.environ.get("BOXES_BIN") or shutil.which("boxes")
         if not boxes:
             return ExecResult(1, "", "`boxes` is not on PATH; install it or set BOXES_BIN")
@@ -246,6 +250,10 @@ class QemuBackend:
     ) -> ExecResult:
         if not self.available():
             return ExecResult(1, "", f"qemu backend not ready ({self.base})")
+        if self.sandbox == "isolated" and (provision or network != "none"):
+            return ExecResult(
+                1, "", "isolated QEMU cannot use provisioning or attacker networking"
+            )
         overlay = self.run_dir / f"{name}.qcow2"
         log = self.run_dir / f"{name}.log"
         pidfile = self.run_dir / f"{name}.pid"
