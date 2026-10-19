@@ -52,9 +52,17 @@ class QemuBackend:
         accel: str | None = None,
         os_name: str = DEFAULT_OS,
         sandbox: str = "trusted",
+        vm_ip: str = "10.66.1.2",
+        attacker_ip: str = "10.66.1.3",
+        host_ip: str = "10.66.1.1",
+        host_access: bool = False,
     ) -> None:
         profile(os_name)  # validate
         self.os_name = os_name
+        self.vm_ip = vm_ip
+        self.attacker_ip = attacker_ip
+        self.host_ip = host_ip
+        self.host_access = host_access
         self.store = Path(store or vm_store(os_name))
         self.base = Path(base or os.environ.get("BOXES_VM_BASE", self.store / "base-prebaked.qcow2"))
         self.key = Path(key) if key else self.store / "boxes_key"
@@ -196,13 +204,14 @@ class QemuBackend:
             return ExecResult(1, "", "`boxes` is not on PATH; install it or set BOXES_BIN")
         user = os.environ.get("SUDO_USER") or getpass.getuser()
         short = self._short_id(name)
-        res = self._run(
-            [
-                "sudo", "-n", boxes, "net", "up", short,
-                "--attacker-pid", str(attacker_pid), "--user", user,
-            ],
-            timeout=60,
-        )
+        cmd = [
+            "sudo", "-n", boxes, "net", "up", short,
+            "--attacker-pid", str(attacker_pid), "--user", user,
+            "--vm-ip", self.vm_ip, "--attacker-ip", self.attacker_ip,
+        ]
+        if self.host_access:
+            cmd += ["--host-ip", self.host_ip]
+        res = self._run(cmd, timeout=60)
         if not res.ok:
             return res
         try:
@@ -236,7 +245,10 @@ class QemuBackend:
             return ExecResult(1, "", "`boxes` is not on PATH; install it or set BOXES_BIN")
         short = self._short_id(network)
         return self._run(
-            ["sudo", "-n", boxes, "net", "attach-attacker", short, str(attacker_pid)],
+            [
+                "sudo", "-n", boxes, "net", "attach-attacker", short,
+                str(attacker_pid), "--attacker-ip", self.attacker_ip,
+            ],
             timeout=60,
         )
 
@@ -265,7 +277,7 @@ class QemuBackend:
             return res
         port = self._free_port()
         state = {"overlay": str(overlay), "log": str(log), "pidfile": str(pidfile),
-                 "port": port, "monitor": str(mon), "name": name}
+                 "port": port, "monitor": str(mon), "name": name, "hostfwd": True}
 
         prov_tap = None
         prov_ip = None
@@ -371,9 +383,25 @@ class QemuBackend:
         state = self._load(name)
         return {
             "ssh_host": "127.0.0.1",
-            "ssh_port": state["port"],
+            "ssh_port": state["port"] if state.get("hostfwd", True) else None,
+            "hostfwd": bool(state.get("hostfwd", True)),
             "vm_ip": state.get("provision_ip"),
+            "host_ip": self.host_ip if self.host_access else None,
+            "attacker_ip": self.attacker_ip,
         }
+
+    def disable_hostfwd(self, name: str) -> ExecResult:
+        """Remove the host-forward after verification for attacker-only builds."""
+        state = self._load(name)
+        port = state.get("port")
+        if not port:
+            return ExecResult(1, "", "no management port in VM state")
+        res = self._monitor(name, f"hostfwd_remove tcp:127.0.0.1:{port}")
+        if not res.ok or "Error" in res.stdout or "error" in res.stdout:
+            return ExecResult(1, res.stdout, res.stderr or "hostfwd_remove failed")
+        state["hostfwd"] = False
+        self._save(name, state)
+        return ExecResult(0, res.stdout, "")
 
     def seal(self, name: str) -> ExecResult:
         """Disconnect the provision NIC before PoCs (host-only phase)."""

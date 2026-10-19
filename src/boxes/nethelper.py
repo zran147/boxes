@@ -24,6 +24,7 @@ NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,30}$")
 SUBNET = ipaddress.ip_network("10.66.1.0/24")
 DEFAULT_VM_IP = "10.66.1.2"
 DEFAULT_ATTACKER_IP = "10.66.1.3"
+DEFAULT_HOST_IP = "10.66.1.1"
 
 PROVISION_BR = "br-provision"
 PROVISION_VETH = "veth-prov"
@@ -69,7 +70,8 @@ def _validate(
     user: str,
     vm_ip: str,
     attacker_ip: str,
-) -> tuple[int, str, str, str]:
+    host_ip: str | None = None,
+) -> tuple[int, str, str, str, str | None]:
     if not NAME_RE.match(name):
         raise NetError(f"invalid machine id {name!r}")
     if len(name) > 9:
@@ -84,18 +86,32 @@ def _validate(
         pwd.getpwnam(user)
     except KeyError as e:
         raise NetError(f"unknown user {user!r}") from e
-    for addr, label in ((vm_ip, "vm"), (attacker_ip, "attacker")):
+    try:
+        vm = ipaddress.ip_address(vm_ip)
+    except ValueError as e:
+        raise NetError(f"invalid vm ip {vm_ip!r}") from e
+    network = ipaddress.ip_network(f"{vm_ip}/24", strict=False)
+    addresses = [(vm_ip, "vm"), (attacker_ip, "attacker")]
+    if host_ip is not None:
+        addresses.append((host_ip, "host"))
+    seen: set[str] = set()
+    for addr, label in addresses:
         try:
             ip = ipaddress.ip_address(addr)
         except ValueError as e:
             raise NetError(f"invalid {label} ip {addr!r}") from e
-        if ip not in SUBNET:
-            raise NetError(f"{label} ip {addr} must be inside {SUBNET}")
-        if ip == SUBNET.network_address or ip == SUBNET.broadcast_address:
+        if ip.version != 4:
+            raise NetError(f"{label} ip {addr} must be IPv4")
+        if ip not in network:
+            raise NetError(f"{label} ip {addr} must be inside {network}")
+        if ip == network.network_address or ip == network.broadcast_address:
             raise NetError(f"{label} ip {addr} is a network/broadcast address")
+        if label != "vm" and addr in seen:
+            raise NetError(f"{label} ip {addr} duplicates another address")
+        seen.add(addr)
     if vm_ip == attacker_ip:
         raise NetError("vm and attacker ips must differ")
-    return pid, user, vm_ip, attacker_ip
+    return pid, user, vm_ip, attacker_ip, host_ip
 
 
 def up(
@@ -104,11 +120,14 @@ def up(
     user: str | None = None,
     vm_ip: str = DEFAULT_VM_IP,
     attacker_ip: str = DEFAULT_ATTACKER_IP,
+    host_ip: str | None = None,
 ) -> dict:
     if os.geteuid() != 0:
         raise NetError("must run as root; use `sudo boxes net up ...`")
     user = user or os.environ.get("SUDO_USER") or getpass.getuser()
-    pid, user, vm_ip, attacker_ip = _validate(name, attacker_pid, user, vm_ip, attacker_ip)
+    pid, user, vm_ip, attacker_ip, host_ip = _validate(
+        name, attacker_pid, user, vm_ip, attacker_ip, host_ip
+    )
 
     br = f"br-{name}"
     tap = f"tap-{name}"
@@ -122,6 +141,8 @@ def up(
     # Docker enables br_netfilter, so bridged IP traffic traverses FORWARD,
     # which Docker's policy drops for unknown bridges. Allow this bridge only.
     _ensure_forward(br)
+    if host_ip is not None:
+        _run(["ip", "addr", "replace", f"{host_ip}/24", "dev", br])
     _run(["ip", "tuntap", "add", "dev", tap, "mode", "tap", "user", user])
     _run(["ip", "link", "set", tap, "master", br])
     _run(["ip", "link", "set", tap, "up"])
@@ -139,6 +160,7 @@ def up(
         "tap": tap,
         "vm_ip": vm_ip,
         "attacker_ip": attacker_ip,
+        "host_ip": host_ip,
         "attacker_if": "eth0",
     }
 
@@ -225,7 +247,9 @@ def _link_exists(dev: str) -> bool:
     return subprocess.run(["ip", "link", "show", dev], capture_output=True).returncode == 0
 
 
-def attach_attacker(name: str, attacker_pid: int) -> dict:
+def attach_attacker(
+    name: str, attacker_pid: int, attacker_ip: str = DEFAULT_ATTACKER_IP
+) -> dict:
     """Attach a freshly recreated attacker container to an existing attack bridge."""
     if os.geteuid() != 0:
         raise NetError("must run as root; use `sudo boxes net attach-attacker ...`")
@@ -239,6 +263,10 @@ def attach_attacker(name: str, attacker_pid: int) -> dict:
     br = f"br-{name}"
     if not _link_exists(br):
         raise NetError(f"attack bridge {br} does not exist")
+    try:
+        ipaddress.ip_address(attacker_ip)
+    except ValueError as e:
+        raise NetError(f"invalid attacker ip {attacker_ip!r}") from e
 
     veth = f"veth-{name}"
     veth_c = f"veth-{name}c"
@@ -248,6 +276,6 @@ def attach_attacker(name: str, attacker_pid: int) -> dict:
     _run(["ip", "link", "set", veth, "up"])
     _run(["ip", "link", "set", veth_c, "netns", str(pid)])
     _run(["nsenter", "-t", str(pid), "-n", "ip", "link", "set", veth_c, "name", "eth0"])
-    _run(["nsenter", "-t", str(pid), "-n", "ip", "addr", "replace", f"{DEFAULT_ATTACKER_IP}/24", "dev", "eth0"])
+    _run(["nsenter", "-t", str(pid), "-n", "ip", "addr", "replace", f"{attacker_ip}/24", "dev", "eth0"])
     _run(["nsenter", "-t", str(pid), "-n", "ip", "link", "set", "eth0", "up"])
-    return {"bridge": br, "attacker_ip": DEFAULT_ATTACKER_IP}
+    return {"bridge": br, "attacker_ip": attacker_ip}

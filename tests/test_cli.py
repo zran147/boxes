@@ -143,3 +143,28 @@ def test_build_is_qemu_only(capsys):
 def test_destroy_unknown_build(capsys):
     assert main(["destroy", "no-such-build"]) == 2
     assert "no build named" in capsys.readouterr().err
+
+
+def test_build_network_derives_host_and_attacker_addresses():
+    ip, network, host_ip, attacker_ip = cli._build_network("192.168.50.10")
+    assert str(ip) == "192.168.50.10"
+    assert str(network) == "192.168.50.0/24"
+    assert host_ip == "192.168.50.1"
+    assert attacker_ip not in {"192.168.50.10", host_ip}
+
+
+def test_build_network_rejects_network_address():
+    import pytest
+    with pytest.raises(ValueError):
+        cli._build_network("10.66.5.0")
+
+
+def test_build_subnet_conflict_detects_host_interface(monkeypatch):
+    class Result:
+        returncode = 0
+        stdout = "2: eth0    inet 192.168.50.5/24 brd 192.168.50.255 scope global eth0\n"
+
+    monkeypatch.setattr(cli.subprocess, "run", lambda *args, **kwargs: Result())
+    conflict = cli._host_subnet_conflict("192.168.50.10")
+    assert conflict is not None
+    assert conflict[0] == "eth0"

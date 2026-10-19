@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import os
 import random
+import subprocess
 import sys
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -715,6 +717,67 @@ def cmd_verify(args) -> int:
 
 
 
+def _build_network(target_ip: str):
+    ip = ipaddress.ip_address(target_ip)
+    if ip.version != 4:
+        raise ValueError("target IP must be IPv4")
+    network = ipaddress.ip_network(f"{target_ip}/24", strict=False)
+    if ip == network.network_address or ip == network.broadcast_address:
+        raise ValueError(f"target IP {target_ip} is a network/broadcast address")
+    free = [str(candidate) for candidate in network.hosts() if str(candidate) != target_ip]
+    if len(free) < 2:
+        raise ValueError("target subnet needs room for a host and attacker address")
+    return ip, network, free[0], free[1]
+
+
+def _host_subnet_conflict(target_ip: str):
+    """Return (interface, network) when the target lands in a host subnet."""
+    try:
+        result = subprocess.run(
+            ["ip", "-4", "-o", "addr", "show"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    target = ipaddress.ip_address(target_ip)
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if "inet" not in fields:
+            continue
+        iface = fields[1].rstrip(":") if len(fields) > 1 else "?"
+        if iface == "lo":
+            continue
+        try:
+            addr = ipaddress.ip_interface(fields[fields.index("inet") + 1])
+        except (ValueError, IndexError):
+            continue
+        if target in addr.network:
+            return iface, addr.network
+    return None
+
+
+def _recreate_attacker(backend, result) -> tuple[bool, str | None]:
+    if not result.attacker or not result.network:
+        return False, "verification did not create an attacker/network"
+    from .backends import get_backend as _gb
+    docker = _gb("docker")
+    docker.destroy(result.attacker)
+    res = docker.create(result.attacker, attacker_image(), network="none")
+    if not res.ok:
+        return False, f"could not recreate attacker: {res.output()}"
+    pid = getattr(docker, "pid", lambda _n: 0)(result.attacker)
+    if not pid:
+        return False, "could not determine the fresh attacker pid"
+    res = backend.attach_attacker(result.network, pid)
+    if not res.ok:
+        return False, f"could not attach the fresh attacker: {res.output()}"
+    return True, None
+
+
 def _destroy_build(backend, result) -> None:
     if result.attacker:
         from .backends import get_backend as _gb
@@ -739,6 +802,28 @@ def cmd_build(args) -> int:
     if args.os not in SUPPORTED_OS:
         print(f"unsupported VM OS {args.os}; supported: {', '.join(SUPPORTED_OS)}", file=sys.stderr)
         return 2
+    try:
+        target_ip, network, host_ip, attacker_ip = _build_network(args.target_ip)
+    except ValueError as e:
+        print(f"bad --target-ip: {e}", file=sys.stderr)
+        return 2
+    conflict = _host_subnet_conflict(str(target_ip))
+    if conflict and not args.yes:
+        if not sys.stdin.isatty():
+            print(
+                f"target IP {target_ip} is inside host subnet {conflict[1]} on "
+                f"{conflict[0]}; re-run with -y to continue",
+                file=sys.stderr,
+            )
+            return 2
+        print(
+            f"warning: target IP {target_ip} is inside existing host subnet "
+            f"{conflict[1]} on {conflict[0]}. This can add a conflicting route.",
+            file=sys.stderr,
+        )
+        answer = input("Continue with this target IP? [y/N] ").strip().lower()
+        if answer not in {"y", "yes"}:
+            return 2
     from . import proxy as proxy_mod
 
     if not proxy_mod.services_ok():
@@ -754,6 +839,10 @@ def cmd_build(args) -> int:
     if not docker.available():
         print("build needs Docker for the attacker environment (`boxes/attacker`)", file=sys.stderr)
         return 2
+    backend.vm_ip = str(target_ip)
+    backend.attacker_ip = attacker_ip
+    backend.host_ip = host_ip
+    backend.host_access = not args.attacker
     recipes = _load_all_recipes(args)
     errs = lint(recipes)
     if errs:
@@ -794,7 +883,11 @@ def cmd_build(args) -> int:
         f"user {summary['user']}/10 {summary['user_band']}, "
         f"root {summary['root']}/10 {summary['root_band']})"
     )
-    print("provisioning, verifying, and restoring the pre-PoC snapshot...")
+    print(
+        "provisioning and restoring the pre-PoC snapshot..."
+        if args.skip_verification
+        else "provisioning, verifying, and restoring the pre-PoC snapshot..."
+    )
     result = verify_machine(
         plan,
         manifest,
@@ -803,12 +896,30 @@ def cmd_build(args) -> int:
         keep=True,
         apt_snapshot=args.apt_snapshot,
         needs_attacker=True,
+        run_pocs=not args.skip_verification,
     )
     _print_verify(result)
     if not result.ok:
         print("build failed; cleaning up the deployment", file=sys.stderr)
         _destroy_build(backend, result)
         return 1
+    if args.attacker:
+        ok, error = _recreate_attacker(backend, result)
+        if not ok:
+            print(f"build failed: {error}", file=sys.stderr)
+            _destroy_build(backend, result)
+            return 1
+        if hasattr(backend, "disable_hostfwd"):
+            res = backend.disable_hostfwd(result.container)
+            if not res.ok:
+                print("build failed: could not remove the host SSH forward", file=sys.stderr)
+                print(res.output(), file=sys.stderr)
+                _destroy_build(backend, result)
+                return 1
+    else:
+        if result.attacker:
+            get_backend("docker").destroy(result.attacker)
+            result.attacker = None
     name = args.name or f"machine-{plan_seed}-{uuid4().hex[:8]}"
     record_path = BUILD_DIR / f"{name}.json"
     if record_path.exists():
@@ -826,6 +937,11 @@ def cmd_build(args) -> int:
         "target": result.container,
         "attacker": result.attacker,
         "network": result.network,
+        "target_ip": str(target_ip),
+        "host_ip": host_ip if not args.attacker else None,
+        "attacker_ip": attacker_ip,
+        "host_access": not args.attacker,
+        "verified": not args.skip_verification,
         "plan_seed": plan_seed,
         "build_seed": build_seed,
         "created_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
@@ -834,13 +950,14 @@ def cmd_build(args) -> int:
     info = backend.connection_info(result.container) if hasattr(backend, "connection_info") else {}
     print()
     print(f"built: {name}")
-    print(f"target: {result.container}")
-    if info.get("ssh_port"):
-        print(f"target ssh: ssh -p {info['ssh_port']} <user>@127.0.0.1")
+    print(f"target ip: {target_ip}")
     if result.attacker:
         print(f"attacker: docker exec -it {result.attacker} bash")
-    if result.host and result.host not in ("target", "127.0.0.1"):
-        print(f"target from attacker: {result.host}")
+        print("target access: attacker-only (host SSH forward disabled)")
+    else:
+        print(f"target access: host bridge {host_ip} -> {target_ip}")
+        if info.get("ssh_port"):
+            print(f"target ssh: ssh -p {info['ssh_port']} <user>@127.0.0.1")
     print("the target is running at its pre-PoC snapshot")
     print(f"stop it with: boxes destroy {name}")
     return 0
@@ -1028,7 +1145,10 @@ def cmd_registry(args) -> int:
 def cmd_net(args) -> int:
     try:
         if args.net_command == "up":
-            print(json.dumps(net_up(args.name, args.attacker_pid, args.user, args.vm_ip, args.attacker_ip)))
+            print(json.dumps(net_up(
+                args.name, args.attacker_pid, args.user,
+                args.vm_ip, args.attacker_ip, args.host_ip,
+            )))
         elif args.net_command == "down":
             print(json.dumps(net_down(args.name)))
         elif args.net_command == "provision-up":
@@ -1041,7 +1161,9 @@ def cmd_net(args) -> int:
             else:
                 print(json.dumps(provision_tap(args.name, args.user)))
         elif args.net_command == "attach-attacker":
-            print(json.dumps(attach_attacker(args.name, args.attacker_pid)))
+            print(json.dumps(attach_attacker(
+                args.name, args.attacker_pid, args.attacker_ip
+            )))
     except NetError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
@@ -1175,6 +1297,14 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--os", default="ubuntu-22.04")
     b.add_argument("--to-user", type=int, default=3, dest="to_user")
     b.add_argument("--to-root", type=int, default=2, dest="to_root")
+    b.add_argument("--target-ip", default="10.66.1.2", dest="target_ip",
+                   help="target IP on the attack network (default: 10.66.1.2)")
+    b.add_argument("-y", "--yes", action="store_true",
+                   help="do not prompt when the target IP is in an existing host subnet")
+    b.add_argument("--attacker", action="store_true",
+                   help="keep a freshly recreated attacker container and make the target attacker-only")
+    b.add_argument("--skip-verification", action="store_true", dest="skip_verification",
+                   help="provision and deploy without running the PoCs")
     b.add_argument("--seed", type=int, default=None, help="plan/chain seed (default: random)")
     b.add_argument("--build-seed", type=int, default=None, dest="build_seed",
                    help="parameter seed (default: random)")
@@ -1203,6 +1333,8 @@ def build_parser() -> argparse.ArgumentParser:
     nu.add_argument("--user", default=None, help="user that owns the tap (default: SUDO_USER)")
     nu.add_argument("--vm-ip", default="10.66.1.2", dest="vm_ip")
     nu.add_argument("--attacker-ip", default="10.66.1.3", dest="attacker_ip")
+    nu.add_argument("--host-ip", default=None, dest="host_ip",
+                    help="optional host-side address on the attack bridge")
     nu.set_defaults(func=cmd_net)
     nd = net_sub.add_parser("down", help="remove bridge + tap + veth")
     nd.add_argument("name")
@@ -1220,6 +1352,7 @@ def build_parser() -> argparse.ArgumentParser:
     aa = net_sub.add_parser("attach-attacker", help="attach a recreated attacker to an attack bridge")
     aa.add_argument("name")
     aa.add_argument("attacker_pid", type=int)
+    aa.add_argument("--attacker-ip", default="10.66.1.3", dest="attacker_ip")
     aa.set_defaults(func=cmd_net)
 
     px = sub.add_parser("proxy", help="package proxy/cache for provisioning")

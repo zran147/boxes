@@ -327,20 +327,48 @@ boxes build --to-user 3 --to-root 2
 ```
 
 It generates a random chain, provisions it in QEMU, runs the verification PoCs,
-restores the **pre-PoC snapshot**, and leaves the target and attacker running.
-The output includes:
+restores the **pre-PoC snapshot**, and leaves the target running. By default the
+host is attached to the attack bridge, so the player can use host tools directly:
 
-- the target's SSH host-forward (`ssh -p <port> <user>@127.0.0.1`);
-- the attacker container (`docker exec -it <name> bash`);
-- the target address from the attacker (`10.66.1.2`).
+```bash
+boxes build --to-user 3 --to-root 2
+# target ip: 10.66.1.2
+nmap -p- 10.66.1.2
+```
 
-From the attacker container, scan and attack the target normally. The target is
-already sealed onto the host-only attack network; generated credentials and
-flags are left for the player to enumerate. Build defaults to QEMU and needs a
-pre-baked base and the Docker attacker image.
+The default build output includes the target IP and its SSH host-forward
+(`ssh -p <port> <user>@127.0.0.1`). The target is sealed onto a host-only bridge
+and generated credentials/flags are left for enumeration.
 
-Use `--seed/--build-seed` for a reproducible machine and `--name` for a stable
-deployment name. Stop and remove it with:
+Options:
+
+```bash
+boxes build --target-ip 10.66.4.50
+boxes build --target-ip 10.66.4.50 -y       # skip existing-subnet prompt
+boxes build --attacker                      # target reachable only from attacker
+boxes build --skip-verification             # provision and deploy without PoCs
+boxes build --seed 0 --build-seed 1 --name demo
+```
+
+`--target-ip` uses a `/24` attack network; the host and attacker addresses are
+chosen around it. If the target IP falls inside an existing host subnet, the
+build warns and asks for confirmation. `-y` accepts automatically.
+
+With `--attacker`, the target is **not** reachable from the host: the host SSH
+forward is removed and no host address is assigned to the attack bridge. After
+verification the temporary attacker container is destroyed and recreated from a
+clean attacker image, then attached to the bridge, so it contains no PoC
+history. The output includes the target IP and:
+
+```bash
+docker exec -it <attacker> bash
+```
+
+`--skip-verification` still provisions and snapshots the machine, but skips the
+PoCs. Build defaults to QEMU and needs a pre-baked base and the Docker attacker
+image.
+
+Stop and remove a deployment with:
 
 ```bash
 boxes destroy <name>

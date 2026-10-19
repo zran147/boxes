@@ -493,6 +493,7 @@ def verify_machine(
     keep: bool = False,
     apt_snapshot: str | None = None,
     needs_attacker: bool | None = None,
+    run_pocs: bool = True,
 ) -> VerifyResult:
     result = VerifyResult(label=f"machine seed={plan.seed}")
 
@@ -557,8 +558,9 @@ def verify_machine(
             result.add(StepResult("machine", "snapshot", snap.ok, snap.exit_code, snap.output()))
             snapshot_ok = snap.ok
 
-        for step, ctx in zip(plan.steps, contexts):
-            _poc(backend, setup, step.recipe, ctx, plan.os_name, result)
+        if run_pocs:
+            for step, ctx in zip(plan.steps, contexts):
+                _poc(backend, setup, step.recipe, ctx, plan.os_name, result)
     finally:
         if snapshot_ok and hasattr(backend, "restore"):
             rest = backend.restore(setup.target, "pre-poc")
