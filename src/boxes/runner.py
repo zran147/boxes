@@ -30,6 +30,7 @@ from .images import attacker_image
 from .manifest import Manifest
 from .planner import Plan
 from .proxy import APT_PROXY_PORT, ARTIFACT_PORT, PROXY_IP, PROXY_PORT
+from .values import format_value
 from . import proxy as proxy_mod
 from .recipe import Recipe
 
@@ -73,12 +74,6 @@ def _env_key(name: str) -> str:
     return "BOX_" + re.sub(r"[^A-Za-z0-9]", "_", name).upper()
 
 
-def _env_value(value) -> str:
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    return str(value)
-
-
 def build_env(
     recipe: Recipe,
     ctx: dict,
@@ -86,7 +81,7 @@ def build_env(
     host: str = "127.0.0.1",
     proxy_url: str | None = None,
 ) -> dict[str, str]:
-    env = {_env_key(key): _env_value(value) for key, value in ctx.items()}
+    env = {_env_key(key): format_value(value) for key, value in ctx.items()}
     # reserved keys always win over a recipe param with the same name
     env["BOX_RECIPE"] = recipe.id
     env["BOX_OS"] = os_name
@@ -327,6 +322,9 @@ def _configure_apt(backend: Backend, setup: _Setup, result: VerifyResult) -> Non
         for host in ("snapshot.ubuntu.com", "snapshot.debian.org"):
             config.append(f'Acquire::http::Proxy::{host} "{setup.proxy_url}";')
             config.append(f'Acquire::https::Proxy::{host} "{setup.proxy_url}";')
+        # snapshot archives are historical and their InRelease Valid-Until has
+        # long passed; apt must not reject them as expired
+        config.append('Acquire::Check-Valid-Until "false";')
     script = (
         "set -eu\n"
         "mkdir -p /etc/apt/apt.conf.d\n"

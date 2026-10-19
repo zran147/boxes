@@ -18,6 +18,7 @@ from random import Random
 from .facts import Fact, Var, SIGNATURES
 from .lint import lint
 from .manifest import generate_param
+from .values import format_value
 from .planner import PRELUDE, TARGET, _applications, initial_state
 from .recipe import Recipe
 
@@ -104,7 +105,10 @@ def _resolve_provides(provides, subst: dict, instance: str, params: dict):
 
 
 def _render(template: str, ctx: dict) -> str:
-    return _PLACEHOLDER.sub(lambda m: str(ctx.get(m.group(1), m.group(0))), template)
+    return _PLACEHOLDER.sub(
+        lambda m: format_value(ctx[m.group(1)]) if m.group(1) in ctx else m.group(0),
+        template,
+    )
 
 
 def check_recipe(recipe: Recipe, seed: int = 0, os_name: str | None = None) -> Result:

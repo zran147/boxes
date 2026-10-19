@@ -418,4 +418,5 @@ def test_apt_snapshot_rewrites_the_sources(tmp_path, monkeypatch):
     assert any("deb https://snapshot.ubuntu.com/ubuntu/20240101T000000Z" in s for s in scripts)
     assert any("Acquire::http::Proxy::snapshot.ubuntu.com" in s for s in scripts)
     assert any("Acquire::https::Proxy::snapshot.ubuntu.com" in s for s in scripts)
+    assert any("Acquire::Check-Valid-Until" in s for s in scripts)
     assert any("apt-get update" in s for s in scripts)

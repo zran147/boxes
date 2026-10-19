@@ -56,7 +56,7 @@ class QemuBackend:
         self.os_name = os_name
         self.store = Path(store or vm_store(os_name))
         self.base = Path(base or os.environ.get("BOXES_VM_BASE", self.store / "base-prebaked.qcow2"))
-        self.key = Path(key or os.environ.get("BOXES_VM_KEY", self.store / "boxes_key"))
+        self.key = Path(key) if key else self.store / "boxes_key"
         self.accel = accel_mod.resolve(accel)
         self.seed = self.store / "seed.iso"
         self.user = user

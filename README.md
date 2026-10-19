@@ -98,7 +98,7 @@ Container recipes (all verified end-to-end):
 - **1 step to root:** `sudo` misconfiguration, or a SUID `find` binary.
 - **2 steps to root:** local enumeration finds a SUID binary → GTFOBins.
 
-VM recipes (QEMU-verified; TCG on this host):
+VM recipes (QEMU-verified with KVM when available, TCG fallback):
 
 - `web-env-leak-creds` and `backup-creds` — credential leaks, container-verified
   and portable to the VM.
@@ -109,10 +109,8 @@ VM recipes (QEMU-verified; TCG on this host):
 - `vm-kernel-probe` — `poc.vm` smoke test (PID 1 is systemd, kernel boot image).
 - `package-probe` — provisioning-proxy smoke test.
 
-Supported distros: **Ubuntu 22.04, Ubuntu 24.04, and Debian 12**. All container
-recipes verify 13/13 on each, and all three have verified QEMU profiles and VM
-chains. Ubuntu 24.04 is slow under TCG (prebake ~24 min, chain ~9 min); use KVM
-or `BOXES_VM_BOOT_TIMEOUT=1800` there.
+Supported distros: **Ubuntu 22.04, Ubuntu 24.04, and Debian 12** (matrix in
+[Distros](#distros)).
 
 Multi-path (`--multi-path N`) generates N paths sharing the user phase. On one
 VM the shared prefix is provisioned once, then each root branch runs with a
@@ -221,7 +219,6 @@ kind: privesc            # discovery | service-access | creds | foothold | prive
 os: ["ubuntu-*"]
 difficulty: 5            # whole number 1–10
 yields: ["root"]         # omit unless this step reaches a flag
-tools: [curl]            # attacker-side commands (optional)
 requires:
   - access_shell($u)
 provides:
@@ -308,10 +305,9 @@ boxes verify --all
 boxes verify --machine --to-user 3 --to-root 2 --seed 0
 ```
 
-The target image carries `vsftpd`, `openssh-server`, `openssh-client` and
-`sshpass`; the attacker image (`boxes/attacker:latest`) carries `nmap`, `curl`,
-`sshpass`, `python3`, `netcat`, `socat` and friends. It grows as recipes need
-more tooling.
+The target base carries `vsftpd`, `openssh-server`, `openssh-client`, and
+`sshpass` per distro. The attacker image (`boxes/attacker:latest`) is generated
+from the toolkit manifest; see [Attacker toolkit](#attacker-toolkit).
 
 ### Recipe verification contract
 
@@ -358,10 +354,16 @@ boxes verify --machine --backend qemu --os debian-12 \
     --to-user 2 --to-root 1 --seed 0
 ```
 
+| OS | Docker | QEMU | VM store | Notes |
+|---|---|---|---|---|
+| `ubuntu-22.04` | 13/13 | probe + chain | `.boxes-vm/` | default; fastest TCG VM |
+| `ubuntu-24.04` | 13/13 | probe + chain | `.boxes-vm/ubuntu-24.04/` | TCG prebake ~24 min, chain ~9 min; use KVM or `BOXES_VM_BOOT_TIMEOUT=1800` |
+| `debian-12` | 13/13 | probe + chain | `.boxes-vm/debian-12/` | TCG chain ~2 min |
+
 Container bases exist for Ubuntu 22.04, Ubuntu 24.04, and Debian 12. QEMU uses
-a matching cloud image and a per-OS store: Ubuntu 22.04 keeps `.boxes-vm/`, the
-other profiles use `.boxes-vm/<os>/`. The cloud image is SHA-verified against
-the distro's `SHA256SUMS`/`SHA512SUMS` and the download is resumable.
+a matching cloud image and the per-OS store shown above. The cloud image is
+SHA-verified against the distro's `SHA256SUMS`/`SHA512SUMS` and the download is
+resumable.
 
 Ubuntu 24.04 cloud-init is noticeably heavier under TCG (prebake ~24 min,
 probe ~8m44s, chain ~9m22s). The prebake/runtime boot timeout defaults to 900s
@@ -388,12 +390,13 @@ not in the manifest.
 
 ```bash
 scripts/acceptance.sh             # unit, lint, 3-OS Docker matrix, Docker tests
-scripts/acceptance.sh --with-vm   # also QEMU prep + a Debian VM chain
+scripts/acceptance.sh --with-vm   # also all 3 QEMU profiles, probes, and 2 chains
 ```
 
 The Docker integration test suite is parametrized over the three distros.
 `--with-vm` preps all three QEMU profiles, runs the VM-only probes, and runs
-Debian and Ubuntu 24.04 chains (slow on TCG).
+Debian and Ubuntu 24.04 chains (slow on TCG; `BOXES_VM_BOOT_TIMEOUT=1800` is
+set by the script).
 
 Scripts are arbitrary code. First-party recipes run as root inside a limited,
 network-isolated container. A public registry must sandbox harder.
@@ -423,8 +426,8 @@ boxes verify --all --clear-cache  # wipe first
 
 `--jobs` parallelizes independent recipes. Chain verification is sequential
 because every step depends on the previous ones. Container timings on this host:
-13 recipes cold with 4 jobs ≈ 15–30 s (the package probe installs via the
-proxy); warm cache ≈ 0.5 s.
+13 recipes per OS cold with 4 jobs ≈ 15–30 s (the package probe installs via
+the proxy); warm cache ≈ 0.5 s.
 
 ## VM backend
 

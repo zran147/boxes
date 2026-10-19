@@ -7,6 +7,7 @@ import re
 from . import difficulty as difficulty_mod
 from .manifest import Manifest
 from .planner import Plan
+from .values import format_value
 
 _PLACEHOLDER = re.compile(r"\{([A-Za-z0-9_.]+)\}")
 
@@ -14,7 +15,7 @@ _PLACEHOLDER = re.compile(r"\{([A-Za-z0-9_.]+)\}")
 def _render(template: str, ctx: dict) -> str:
     def sub(m: re.Match) -> str:
         key = m.group(1)
-        return str(ctx[key]) if key in ctx else m.group(0)
+        return format_value(ctx[key]) if key in ctx else m.group(0)
 
     return _PLACEHOLDER.sub(sub, template)
 
